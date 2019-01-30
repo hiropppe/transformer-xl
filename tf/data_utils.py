@@ -49,7 +49,7 @@ class Corpus(object):
     self.dataset = dataset
     self.vocab = Vocab(*args, **kwargs)
 
-    if self.dataset in ["ptb", "wt2", "enwik8", "text8"]:
+    if self.dataset in ["ptb", "wt2", "enwik8", "text8", "test"]:
       self.vocab.count_file(os.path.join(path, "train.txt"))
       self.vocab.count_file(os.path.join(path, "valid.txt"))
       self.vocab.count_file(os.path.join(path, "test.txt"))
@@ -60,14 +60,13 @@ class Corpus(object):
           path, "1-billion-word-language-modeling-benchmark-r13output",
           "training-monolingual.tokenized.shuffled", "news.en-*")
       train_paths = glob(train_path_pattern)
-
       # the vocab will load from file when build_vocab() is called
       # for train_path in sorted(train_paths):
       #   self.vocab.count_file(train_path, verbose=True)
 
     self.vocab.build_vocab()
 
-    if self.dataset in ["ptb", "wt2", "wt103"]:
+    if self.dataset in ["ptb", "wt2", "wt103", "test"]:
       self.train = self.vocab.encode_file(
           os.path.join(path, "train.txt"), ordered=True)
       self.valid = self.vocab.encode_file(
@@ -114,7 +113,7 @@ class Corpus(object):
 
     record_info_path = os.path.join(save_dir, record_name)
 
-    if self.dataset in ["ptb", "wt2", "wt103", "enwik8", "text8"]:
+    if self.dataset in ["ptb", "wt2", "wt103", "enwik8", "text8", "test"] :
       data = getattr(self, split)
       bin_sizes = get_bin_sizes(
           data, bsz // num_core_per_host, tgt_len, self.cutoffs)
@@ -215,12 +214,12 @@ def _float_feature(values):
 
 def batchify(data, batch_size, num_passes):
   """
-    if use_tpu = True: num_passes > 1 
-    
+    if use_tpu = True: num_passes > 1
+
     Since TPU training requires entire [bsz x tgt_len] chunks, it can discard
-    as many as `bsz * tgt_len` tokens in training. When `bsz` and `tgt_len` are 
+    as many as `bsz * tgt_len` tokens in training. When `bsz` and `tgt_len` are
     both large, as in the case of TPU training for Transformer-XL, the problem
-    may lead to detectable performance drop. 
+    may lead to detectable performance drop.
 
     Here, we use multiple randomly shifted copies to deal with this problem.
   """
@@ -241,7 +240,7 @@ def batchify(data, batch_size, num_passes):
 
 
 def create_ordered_tfrecords(save_dir, basename, data, batch_size, tgt_len,
-                             num_core_per_host, cutoffs=[], bin_sizes=[], 
+                             num_core_per_host, cutoffs=[], bin_sizes=[],
                              num_passes=1, use_tpu=False):
 
   if use_tpu:
@@ -261,7 +260,7 @@ def create_ordered_tfrecords(save_dir, basename, data, batch_size, tgt_len,
   for t in range(0, batched_data.shape[1] - 1, tgt_len):
     cur_tgt_len = min(batched_data.shape[1] - 1 - t, tgt_len)
     # drop the remainder if use tpu
-    if use_tpu and cur_tgt_len < tgt_len: 
+    if use_tpu and cur_tgt_len < tgt_len:
       break
     if num_batch % 500 == 0:
       print("  processing batch {}".format(num_batch))
@@ -336,10 +335,11 @@ def create_ordered_tfrecords(save_dir, basename, data, batch_size, tgt_len,
   return file_name, num_batch
 
 
-def get_lm_corpus(data_dir, dataset):
+def get_lm_corpus(data_dir, dataset, spm_file=None):
   fn = os.path.join(data_dir, "cache.pkl")
 
-  if exists(fn):
+  #if exists(fn):
+  if False:
     print("Loading cached dataset...")
     with open(fn, "rb") as fp:
       corpus = pickle.load(fp)
@@ -356,6 +356,10 @@ def get_lm_corpus(data_dir, dataset):
       kwargs["special"] = []
       kwargs["lower_case"] = False
       kwargs["vocab_file"] = os.path.join(data_dir, "1b_word_vocab.txt")
+    elif dataset == "test":
+      kwargs["special"] = []
+      kwargs["lower_case"] = False
+      kwargs["spm_file"] = spm_file 
     elif dataset in ["enwik8", "text8"]:
       pass
 
@@ -379,7 +383,7 @@ def get_lm_corpus(data_dir, dataset):
 def main(unused_argv):
   del unused_argv  # Unused
 
-  corpus = get_lm_corpus(FLAGS.data_dir, FLAGS.dataset)
+  corpus = get_lm_corpus(FLAGS.data_dir, FLAGS.dataset, FLAGS.spm_file)
 
   save_dir = os.path.join(FLAGS.data_dir, "tfrecords")
   if not exists(save_dir):
@@ -388,7 +392,7 @@ def main(unused_argv):
   # test mode
   if FLAGS.per_host_test_bsz > 0:
     corpus.convert_to_tfrecords("test", save_dir, FLAGS.per_host_test_bsz,
-                                FLAGS.tgt_len, FLAGS.num_core_per_host, 
+                                FLAGS.tgt_len, FLAGS.num_core_per_host,
                                 FLAGS=FLAGS)
     return
 
@@ -557,7 +561,7 @@ if __name__ == "__main__":
   flags.DEFINE_string("data_dir", None,
         help="Location of the data corpus")
   flags.DEFINE_enum("dataset", "wt103",
-        ["ptb", "wt2", "wt103", "lm1b", "enwik8", "text8"],
+        ["ptb", "wt2", "wt103", "lm1b", "enwik8", "text8", "test"],
         help="Dataset name.")
   flags.DEFINE_integer("per_host_train_bsz", 60,
         help="train batch size each host")
@@ -582,5 +586,7 @@ if __name__ == "__main__":
         help="number of shuffles for lm1b")
   flags.DEFINE_bool("use_tpu", True,
         help="use tpu")
+  flags.DEFINE_string("spm_file", None,
+        help="Location of sentencepiece model")
 
   tf.app.run(main)

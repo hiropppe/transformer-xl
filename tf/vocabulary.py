@@ -11,9 +11,12 @@ import tensorflow as tf
 from tensorflow.gfile import Open as open
 from tensorflow.gfile import Exists as exists
 
+import sentencepiece as spm
+
+
 class Vocab(object):
   def __init__(self, special=[], min_freq=0, max_size=None, lower_case=True,
-         delimiter=None, vocab_file=None):
+         delimiter=None, vocab_file=None, spm_file=None):
     self.counter = Counter()
     self.special = special
     self.min_freq = min_freq
@@ -21,8 +24,17 @@ class Vocab(object):
     self.lower_case = lower_case
     self.delimiter = delimiter
     self.vocab_file = vocab_file
+    self.spm_file = spm_file
+    if self.spm_file:
+        self.sp = spm.SentencePieceProcessor()
+        self.sp.Load(self.spm_file)
+    else:
+        self.sp = None
 
   def tokenize(self, line, add_eos=False, add_double_eos=False):
+    if self.sp:
+        return self.sp.encode_as_ids(line)
+
     line = line.strip()
     # convert to lower case
     if self.lower_case:
@@ -77,7 +89,9 @@ class Vocab(object):
     self.unk_idx = self.sym2idx['<UNK>']
 
   def build_vocab(self):
-    if self.vocab_file:
+    if self.sp:
+      print('vocab size {}'.format(self.sp.get_piece_size()))
+    elif self.vocab_file:
       print('building vocab from {}'.format(self.vocab_file))
       self._build_from_file(self.vocab_file)
       print('final vocab size {}'.format(len(self)))
@@ -106,9 +120,14 @@ class Vocab(object):
       for idx, line in enumerate(f):
         if verbose and idx > 0 and idx % 500000 == 0:
           print('  line {}'.format(idx))
+          if self.sp:
+            print(' '.join([self.sp.id_to_piece(token_id) for token_id in encoded[-1]]))
         symbols = self.tokenize(line, add_eos=add_eos,
           add_double_eos=add_double_eos)
-        encoded.append(self.convert_to_nparray(symbols))
+        if self.sp:
+          encoded.append(np.array(symbols, dtype=np.int64))
+        else:
+          encoded.append(self.convert_to_nparray(symbols))
 
     if ordered:
       encoded = np.concatenate(encoded)
@@ -119,9 +138,12 @@ class Vocab(object):
     if verbose: print('encoding {} sents ...'.format(len(sents)))
     encoded = []
     for idx, symbols in enumerate(sents):
-      if verbose and idx > 0 and idx % 500000 == 0:
+      if verbose and idx > 0 and idx % 100000 == 0:
         print('  line {}'.format(idx))
-      encoded.append(self.convert_to_nparray(symbols))
+      if self.sp:
+        encoded.append(np.array(symbols, dtype=np.int64))
+      else:
+        encoded.append(self.convert_to_nparray(symbols))
 
     if ordered:
       encoded = np.concatenate(encoded)
@@ -167,4 +189,19 @@ class Vocab(object):
       return ' '.join([self.get_sym(idx) for idx in indices if idx not in exclude])
 
   def __len__(self):
-    return len(self.idx2sym)
+    if self.sp:
+      return self.sp.get_piece_size()
+    else:
+      return len(self.idx2sym)
+
+  def __getstate__(self):
+    state = self.__dict__.copy()
+    if state["sp"]:
+      del state["sp"]
+    return state
+
+  def __setstate__(self, state):
+    self.__dict__.update(state)
+    if self.spm_file:
+      self.sp = spm.SentencePieceProcessor()
+      self.sp.Load(self.spm_file)
