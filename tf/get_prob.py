@@ -84,9 +84,7 @@ flags.DEFINE_string("eval_split", "valid",
 
 flags.DEFINE_string("spm_file", None,
       help="Location of sentencepiece model")
-flags.DEFINE_string("start_string", "今日",
-      help="")
-flags.DEFINE_integer("num_generate", default=30,
+flags.DEFINE_string("sent", "今日",
       help="")
 
 # Model config
@@ -219,14 +217,23 @@ def single_core_graph(n_token, cutoffs, is_training, inp, tgt, mems):
   return model_ret
 
 
-def generate(n_token, cutoffs, ps_device, spm_file, start_string, num_generate):
+def get_prob(n_token, cutoffs, ps_device, spm_file, sent):
   import sentencepiece as spm
   sp = spm.SentencePieceProcessor()
   sp.Load(spm_file)
-  start_ids = sp.encode_as_ids(start_string)
-  print('{:s}({:s})'.format(start_string, ' '.join(str(i) for i in start_ids)))
+  sent_ids = sp.encode_as_ids(sent)
+  print('{:s}({:s})'.format(sent, ' '.join(str(i) for i in sent_ids)))
   ids = []
-  ids.extend(start_ids)
+  next_id = None
+  pred_len= None
+  t = None
+  if sent_ids[0] == 6:
+    t = 2
+  else:
+    t = 1
+  ids.extend(sent_ids[:t])
+  next_id = sent_ids[t]
+  pred_len = len(sent_ids) - t
 
   tower_mems = []
 
@@ -271,16 +278,22 @@ def generate(n_token, cutoffs, ps_device, spm_file, start_string, num_generate):
     for m, m_np in zip(tower_mems[0], tower_mems_np[0]):
       feed_dict[m] = m_np
 
-    for i in range(num_generate):
+    probs = []
+    for i in range(pred_len):
         feed_dict[inp_ph] = np.expand_dims(ids, 0)
         fetched = sess.run(fetches, feed_dict=feed_dict)
         predictions = fetched[0]
         predictions = np.squeeze(predictions[-1], 0)
-        predicted_id = np.argmax(predictions)
-        ids.append(predicted_id)
+        prob = predictions[next_id]
+        probs.append(prob)
+        ids.append(next_id)
         print(' '.join([str(i) for i in ids]))
+        if t <= pred_len:
+          t += 1
+          next_id = sent_ids[t]
 
     print(' '.join(sp.id_to_piece(i) for i in ids))
+    print('prob={:.4f}'.format(np.mean(probs)))
 
 
 def main(unused_argv):
@@ -294,7 +307,7 @@ def main(unused_argv):
   cutoffs = corpus_info["cutoffs"][1:-1]
   tf.logging.info("n_token {}".format(n_token))
 
-  generate(n_token, cutoffs, "/gpu:0", FLAGS.spm_file, FLAGS.start_string, FLAGS.num_generate)
+  get_prob(n_token, cutoffs, "/gpu:0", FLAGS.spm_file, FLAGS.sent)
 
 
 if __name__ == "__main__":

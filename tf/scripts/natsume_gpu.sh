@@ -16,8 +16,8 @@ D_INNER=2100
 TGT_LEN=150
 MEM_LEN=150
 
-BSZ=1
-NUM_CORE=1
+BSZ=60
+NUM_CORE=2
 
 # Testing
 TEST_TGT_LEN=64
@@ -136,6 +136,36 @@ elif [[ $1 == 'gen' ]]; then
         --do_gen=True \
         --eval_split=test \
         --start_string=$2 \
+        ${@:2}
+elif [[ $1 == 'prob' ]]; then
+    echo 'Probability of occurence ...'
+    python get_prob.py \
+        --data_dir=${DATA_ROOT}/tfrecords \
+        --corpus_info_path=${DATA_ROOT}/corpus-info.json \
+        --spm_file=${DATA_ROOT}/natsume.model \
+        --model_dir=EXP-natsume \
+        --div_val=${DIV_VAL} \
+        --untie_r=True \
+        --proj_share_all_but_first=True \
+        --n_layer=${N_LAYER} \
+        --d_model=${D_MODEL} \
+        --d_embed=${D_EMBED} \
+        --n_head=${N_HEAD} \
+        --d_head=${D_HEAD} \
+        --d_inner=${D_INNER} \
+        --dropout=0.0 \
+        --dropatt=0.0 \
+        --tgt_len=1 \
+        --mem_len=${TEST_MEM_LEN} \
+        --clamp_len=${TEST_CLAMP_LEN} \
+        --same_length=True \
+        --eval_batch_size=1 \
+        --num_core_per_host=1 \
+        --do_train=False \
+        --do_eval=False \
+        --do_gen=True \
+        --eval_split=test \
+        --sent=$2 \
         ${@:2}
 else
     echo 'unknown argment 1'
