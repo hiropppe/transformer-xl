@@ -222,18 +222,13 @@ def get_prob(n_token, cutoffs, ps_device, spm_file, sent):
   sp = spm.SentencePieceProcessor()
   sp.Load(spm_file)
   sent_ids = sp.encode_as_ids(sent)
-  print('{:s}({:s})'.format(sent, ' '.join(str(i) for i in sent_ids)))
-  ids = []
-  next_id = None
-  pred_len= None
-  t = None
+  print(' '.join('{:s}({:d})'.format(sp.id_to_piece(i), i) for i in sent_ids))
   if sent_ids[0] == 6:
     t = 2
   else:
     t = 1
+  ids = []
   ids.extend(sent_ids[:t])
-  next_id = sent_ids[t]
-  pred_len = len(sent_ids) - t
 
   tower_mems = []
 
@@ -278,23 +273,21 @@ def get_prob(n_token, cutoffs, ps_device, spm_file, sent):
     for m, m_np in zip(tower_mems[0], tower_mems_np[0]):
       feed_dict[m] = m_np
 
-    probs = []
-    for i in range(pred_len):
+    probs = [1.0] * t
+    start = time.time()
+    for i in range(t, len(sent_ids)):
         feed_dict[inp_ph] = np.expand_dims(ids, 0)
         fetched = sess.run(fetches, feed_dict=feed_dict)
         predictions = fetched[0]
         predictions = np.squeeze(predictions[-1], 0)
-        prob = predictions[next_id]
+        prob = predictions[sent_ids[i]]
         probs.append(prob)
-        ids.append(next_id)
-        print(' '.join([str(i) for i in ids]))
-        if t <= pred_len:
-          t += 1
-          next_id = sent_ids[t]
+        ids.append(sent_ids[i])
+        #print(' '.join([str(i) for i in ids]))
 
-    print(' '.join(sp.id_to_piece(i) for i in ids))
-    print('prob={:.4f}'.format(np.mean(probs)))
-
+    print(' '.join('{:s}({:.7f})'.format(sp.id_to_piece(e[0]), e[1]) for e in zip(ids, probs)))
+    print('occurence score={:.3f}'.format(np.sum(np.log(np.array(probs[t:]) + 1e-10))))
+    print('elapsed={:.4f} ms'.format((time.time() - start)*1000))
 
 def main(unused_argv):
   del unused_argv  # Unused
