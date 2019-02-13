@@ -70,9 +70,6 @@ flags.DEFINE_float("init_range", default=0.1,
 
 FLAGS = flags.FLAGS
 
-graph = None
-sess = None
-
 
 def get_model_fn(n_token, cutoffs):
     def model_fn(inp, tgt, mems, is_training):
@@ -184,7 +181,7 @@ def apply_temperature(distribution, temperature=1.0):
     return probs / probs.sum()
 
 
-class LanguageModel(object):
+class PolicyNet(object):
 
     def __init__(self, spm_file, action_fn, model_dir, ckpt_path=None):
         self.sp = spm.SentencePieceProcessor()
@@ -218,7 +215,7 @@ class LanguageModel(object):
     def id_to_token(self, token_id):
         return self.sp.id_to_piece(token_id)
 
-    def get_next_probs(self, token_ids, temperature=0.67):
+    def forward(self, token_ids, temperature=0.67):
         self.feed_dict[self.inp_ph] = np.expand_dims(token_ids, 0)
         fetched = self.sess.run([self.actions], feed_dict=self.feed_dict)
         probs = fetched[0][-1, -1]
@@ -276,7 +273,7 @@ def main(unused_argv):
 
     start_string = '吾輩が'
 
-    lang_model = LanguageModel(FLAGS.spm_file, graph_fn, FLAGS.model_dir)
+    lang_model = PolicyNet(FLAGS.spm_file, graph_fn, FLAGS.model_dir)
 
     start = time.time()
     seq = lang_model.generate_example(start_string=start_string, n=max_depth, greedy=True)
@@ -297,7 +294,7 @@ def main(unused_argv):
     print('  Elapsed {:.4f} sec'.format(elapsed))
 
     game = NLGGame(max_depth=max_depth,
-                   calculate_p=lang_model.get_next_probs,
+                   policy=lang_model.forward,
                    id_to_token=lang_model.id_to_token)
 
     start_ids = lang_model.encode_as_ids(start_string)

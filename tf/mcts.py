@@ -71,14 +71,14 @@ class NLGGame(Game):
                  max_depth=3,
                  max_selection=20,
                  weights=None,
-                 calculate_p=None,
+                 policy=None,
                  id_to_token=None):
         self.max_depth = max_depth
         self.start_depth = start_depth
         self.contexts = contexts
         self.max_selection = max_selection
         self.weights = weights
-        self.calculate_p = calculate_p
+        self.policy = policy
         self.id_to_token = id_to_token
 
     def actions(self, state):
@@ -242,7 +242,7 @@ class Node(object):
         if self.visits < self.expansion_threshold:
             return self
 
-        p = self.game.calculate_p(self.state.actions)
+        p = self.game.policy(self.state.actions)
         top_n = np.argpartition(p, -10)[-10:]
         # renorm top_n probs
         top_np = apply_temperature(p[top_n], temperature=self.temperature)
@@ -292,7 +292,7 @@ class Node(object):
         """
         st = self.state
         while not self.game.terminal(st):
-            p = self.game.calculate_p(self.state.actions)
+            p = self.game.policy(self.state.actions)
             p = apply_temperature(p, temperature=self.temperature)
             action = np.random.choice(len(p), 1, p=p)[0]
             st = self.game.result(st, action)
