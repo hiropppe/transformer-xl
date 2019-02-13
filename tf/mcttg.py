@@ -177,11 +177,11 @@ def graph_fn(n_token):
 
 
 def apply_temperature(distribution, temperature=1.0):
-    log_probabilities = np.log(distribution)
-    log_probabilities = log_probabilities * temperature
-    log_probabilities = log_probabilities - log_probabilities.max()
-    probabilities = np.exp(log_probabilities)
-    return probabilities / probabilities.sum()
+    logits = np.log(distribution)
+    logits = logits * temperature
+    logits = logits - logits.max()
+    probs = np.exp(logits)
+    return probs / probs.sum()
 
 
 class LanguageModel(object):
@@ -215,6 +215,9 @@ class LanguageModel(object):
     def encode_as_ids(self, string):
         return self.sp.encode_as_ids(string)
 
+    def id_to_token(self, token_id):
+        return self.sp.id_to_piece(token_id)
+
     def get_next_probs(self, token_ids, temperature=0.67):
         self.feed_dict[self.inp_ph] = np.expand_dims(token_ids, 0)
         fetched = self.sess.run([self.actions], feed_dict=self.feed_dict)
@@ -222,24 +225,25 @@ class LanguageModel(object):
         probs = apply_temperature(probs, temperature)
         return probs
 
-    def generate_example(self, start_string='吾輩', n=10, temperature=0.67):
+    def generate_example(self, start_string='吾輩', n=10, temperature=0.67, greedy=False):
         start_ids = self.sp.encode_as_ids(start_string)
         ids = []
         ids.extend(start_ids)
 
-        start = time.time()
+        seq = [(i, 100.0) for i in ids]
         for i in range(n):
             self.feed_dict[self.inp_ph] = np.expand_dims(ids, 0)
             fetched = self.sess.run([self.actions], feed_dict=self.feed_dict)
-            predictions = fetched[0][-1, -1]
-            predictions = apply_temperature(predictions, temperature)
-            predicted_id = np.random.choice(self.n_token, 1, p=predictions)
-            ids.append(int(predicted_id))
+            probs = fetched[0][-1, -1]
+            if greedy:
+                token_id = np.argmax(probs)
+            else:
+                probs = apply_temperature(probs, temperature)
+                token_id = np.random.choice(self.n_token, 1, p=probs)
+            seq.append((token_id, probs[token_id]))
+            ids.append(int(token_id))
 
-        elapsed_sec = time.time() - start
-        print('elapsed {:.4f} sec/sent ({:.4f} ms/token)'.format(elapsed_sec, elapsed_sec*1000/n))
-        print(' '.join(self.sp.id_to_piece(i) for i in ids))
-        print(ids)
+        return seq
 
 
 def main(unused_argv):
@@ -248,22 +252,44 @@ def main(unused_argv):
     tf.logging.set_verbosity(tf.logging.INFO)
 
     n = 100
-    max_depth = 3
+    max_depth = 15
 
+    start_string = '吾輩が'
+
+    start = time.time()
     lang_model = LanguageModel(FLAGS.spm_file, graph_fn, FLAGS.model_dir)
-    lang_model.generate_example()
+    seq = lang_model.generate_example(start_string=start_string, n=max_depth, greedy=True)
+    elapsed = time.time() - start
+    print('Greedy:')
+    print('  text: {:s}'.format(' '.join(lang_model.id_to_token(int(token[0])) for token in seq)))
+    print('  ids: {:s}'.format(str([token[0] for token in seq])))
+    print('  policy: {:s}'.format(str([token[1] for token in seq])))
+    print('  elapsed {:.4f} sec ({:.4f} ms/token)'.format(elapsed, elapsed*1000/max_depth))
 
-    start_string = '吾輩'
+    game = NLGGame(max_depth=max_depth,
+                   calculate_p=lang_model.get_next_probs,
+                   id_to_token=lang_model.id_to_token)
+
     start_ids = lang_model.encode_as_ids(start_string)
-
-    game = NLGGame(max_depth=max_depth, calculate_p=lang_model.get_next_probs)
 
     current_state = State(actions=[start_ids[0]])
     if len(start_ids) > 1:
         for token_id in start_ids[1:]:
             current_state = game.result(current_state, token_id)
 
-    best_action = mcts_uct(game, current_state, n)
+    start = time.time()
+    best_sequence = mcts_uct(game, current_state, n)
+    elapsed = time.time() - start
+    print('Final Best Sequence:')
+    print('  Start: {:s}'.format(start_string))
+    print('  Start Ids: {:s}'.format(str(start_ids)))
+    print('  Text: {:s}'.format(' '.join(lang_model.id_to_token(token_id) for token_id in best_sequence[-1].state.actions)))
+    print('  IDs: ' + str(best_sequence[-1].state.actions))
+    print('  Number of simulations: {:d}'.format(best_sequence[0].visits))
+    print('  Policy: {:s}'.format('->'.join([str(node.P)[:5] for node in best_sequence])))
+    print('  Visits: {:s}'.format('->'.join([str(node.visits) for node in best_sequence])))
+    print('  Action Value: {:s}'.format('->'.join([str(node.value/node.visits)[:5] for node in best_sequence])))
+    print('  Elapsed(sec): total {:.4f} sec {:.4f} ms/search'.format(elapsed, elapsed*1000/n))
 
 
 if __name__ == "__main__":

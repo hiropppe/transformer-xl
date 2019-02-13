@@ -5,6 +5,7 @@ games. Specifically, an implementation of the MCTS algorithm.
 import copy
 import numpy as np
 import random, queue
+import re
 from math import sqrt, log
 from random import sample
 from syntaxeval import Analyzer
@@ -12,29 +13,33 @@ from sklearn.utils import shuffle
 from random import uniform
 
 
-def eval_actions(actions, analyzer, contexts=[""], weights=None):
-    sent = ''.join([action.token for action in actions]).replace("▁","") + "。"
-    flag = True
-    ss = []
-    for c in contexts:
-        flag = flag and (c in sent)
+def apply_temperature(distribution, temperature=1.0):
+    logits = np.log(distribution)
+    logits = logits * temperature
+    logits = logits - logits.max()
+    probs = np.exp(logits)
+    return probs / probs.sum()
 
-    if flag:
+
+def eval_actions(actions, analyzer, id_to_token):
+    ss = []
+    sents = ''.join([id_to_token(int(action)) for action in actions]).replace("▁","")
+    for sent in re.split('[。?!]', sents):
+        if not sent.strip():
+            continue
+        sent = sent + "。"
+
         try:
             result = analyzer(sent)
-            print(result['probabilities'], result['tree'])
-            ss.append(result['probabilities']['syntax'][0][1])
-            ss.append(result['probabilities']['semantics'][0])
+            if np.random.rand() < 0.3:
+                print('[random simulation choice] {:s} (syntax: {:4f} semantics: {:4f})'.format(sent, result['probabilities']['syntax'], result['probabilities']['semantics']))
+            ss.append(result['probabilities']['syntax'])
+            #ss.append(result['probabilities']['semantics'])
         except:
-            return 0.0
-        if weights is None:
-            return sum(ss)/len(ss)
-        else:
-            assert len(weights) == len(ss)
-            t = [float(weight) for weight in weights]
-            return sum([weight*s for weight,s in zip(weights, ss)])/float(t)
-    else:
-        return 0.0
+            ss.append(0.0)
+
+    return sum(ss)/len(ss)
+
 
 def select_actions(normal_actions, max_selection):
     #some algorithms here
@@ -60,13 +65,21 @@ class Game(object):
 
 class NLGGame(Game):
 
-    def __init__(self, contexts=[""], start_depth=0, max_depth=3, max_selection=20, weights=None, calculate_p=None):
+    def __init__(self,
+                 contexts=[],
+                 start_depth=0,
+                 max_depth=3,
+                 max_selection=20,
+                 weights=None,
+                 calculate_p=None,
+                 id_to_token=None):
         self.max_depth = max_depth
         self.start_depth = start_depth
         self.contexts = contexts
         self.max_selection = max_selection
         self.weights = weights
         self.calculate_p = calculate_p
+        self.id_to_token = id_to_token
 
     def actions(self, state):
         return select_actions(state.normal_actions, self.max_selection)
@@ -85,9 +98,10 @@ class NLGGame(Game):
         return state.current_depth >= self.max_depth
 
     def outcome(self, state):
-        reward = eval_actions(state.actions, state.analyzer.analyze, self.contexts, self.weights)
+        reward = eval_actions(state.actions,
+                              state.analyzer.analyze,
+                              self.id_to_token)
         return reward
-
 
 
 class Action:
@@ -136,6 +150,11 @@ class Node(object):
         self.P = P
         self.visits    = 0
         self.value     = 0.0
+        self.Q = 0.0
+        # Hyper parameter
+        self.C_puct = 5
+        self.expansion_threshold = 10
+        self.temperature = 0.67
     
     def __iter__(self):
         """
@@ -172,15 +191,15 @@ class Node(object):
 
     def search_weight(self, c):
         """
-        Compute the UCT search weight function for this node. Defined as:
+        Compute the PUCT(UCT + Policy) search weight function for this node. Defined as:
 
-            w = Q(v') / N(v') + c * sqrt(2 * ln(N(v)) / N(v'))
+            w = Q(v') / N(v') + c_puct * P * sqrt(N(v)) / 1 + N(v'))
 
         Where v' is the current node and v is the parent of the current node,
         and Q(x) is the total value of node x and N(x) is the number of visits
         to node x.
         """
-        return self.weight + c * sqrt(2 * log(self.parent.visits) / self.visits)
+        return self.Q + self.P * (sqrt(self.parent.visits)/(1+self.visits))
 
     def actions(self):
         """
@@ -220,9 +239,21 @@ class Node(object):
         Instantiates one of the unexpanded children (if there are any,
         otherwise raises an exception) and returns it.
         """
+        if self.visits < self.expansion_threshold:
+            return self
+
         p = self.game.calculate_p(self.state.actions)
-        self.children = [Node(self, e[0], self.state, P=e[1]) for e in enumerate(p)]
-        child = np.random.choice(len(p), 1, p=p)[0]
+        top_n = np.argpartition(p, -10)[-10:]
+        # renorm top_n probs
+        top_np = apply_temperature(p[top_n], temperature=self.temperature)
+        #top_np = np.log(p[top_n]) * self.temperature
+        #top_np = top_np - top_np.max()
+        #top_np = np.exp(top_np)
+        #top_np = top_np/top_np.sum()
+        child = int(np.where(top_n == p.argmax())[0])
+        self.children = [Node(self, int(c[0]), self.result(int(c[0])), P=c[1]) for c in zip(top_n, top_np)]
+        # self.children = [Node(self, e[0], self.result(e[0]), P=e[1]) for e in enumerate(p)]
+        # child = np.random.choice(len(p), 1, p=p)[0]
         return self.children[child]
 
     def best_child(self, c=1/sqrt(2)):
@@ -237,6 +268,15 @@ class Node(object):
         node.
         """
         return self.best_child(c).action
+
+    def best_sequence(self):
+        sequence = []
+        children = self.children
+        while children is not None:
+            max_child = max(children, key=lambda x: x.visits)
+            sequence.append(max_child)
+            children = max_child.children
+        return sequence
 
     def max_child(self):
         """
@@ -253,6 +293,7 @@ class Node(object):
         st = self.state
         while not self.game.terminal(st):
             p = self.game.calculate_p(self.state.actions)
+            p = apply_temperature(p, temperature=self.temperature)
             action = np.random.choice(len(p), 1, p=p)[0]
             st = self.game.result(st, action)
         return self.game.outcome(st)
@@ -284,13 +325,12 @@ class Node(object):
         return output
 
 
-def mcts_uct(game, state, budget):
+def mcts_uct(game, state, n, report_every=10):
     """
     Implementation of the UCT variant of the MCTS algorithm.
     """
     root = Node(None, None, state, game)
-    while budget:
-        budget -= 1
+    for step in range(n):
         # Tree Policy
         child = root
         while not child.terminal():
@@ -305,9 +345,21 @@ def mcts_uct(game, state, budget):
         while not child is None:
             child.visits += 1
             child.value += delta
+            child.Q = child.value/child.visits
             child = child.parent
 
-    return root.best_action(c=0)
+        if step % report_every == 0:
+            bs = root.best_sequence()
+            if not bs:
+                continue
+            print('Best Sequence (simulations={:d}):'.format(step))
+            print('  Text: {:s}'.format(' '.join(game.id_to_token(token_id) for token_id in bs[-1].state.actions)))
+            print('  IDs: ' + str(bs[-1].state.actions))
+            print('  Policy: {:s}'.format('->'.join([str(node.P)[:5] for node in bs])))
+            print('  Visits: {:s}'.format('->'.join([str(node.visits) for node in bs])))
+            print('  Action Value: {:s}'.format('->'.join([str(node.value/node.visits)[:5] for node in bs])))
+
+    return root.best_sequence()
 
 
 def full_tree(game, state):
@@ -394,11 +446,3 @@ def mcts(game, state, n):
             backup = backup.parent
 
     return root
-
-
-
-
-
-
-
-
