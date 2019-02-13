@@ -323,6 +323,11 @@ def train(n_token, cutoffs, ps_device):
       tf.logging.info("warm start from {}".format(FLAGS.warm_start_path))
       saver.restore(sess, FLAGS.warm_start_path)
 
+    if FLAGS.model_dir:
+      ckpt_path = tf.train.latest_checkpoint(FLAGS.model_dir)
+      if ckpt_path:
+        saver.restore(sess, ckpt_path)
+
     fetches = [loss, tower_new_mems, global_step, gnorm, learning_rate, train_op]
 
     total_loss, prev_step = 0., -1
