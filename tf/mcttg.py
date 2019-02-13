@@ -245,26 +245,56 @@ class LanguageModel(object):
 
         return seq
 
+    def beam_example(self, start_string='吾輩', n=10, k=10):
+        from tqdm import tqdm
+        start_ids = self.sp.encode_as_ids(start_string)
+
+        top_k_sents = [[start_ids, .0]]
+        for i in tqdm(range(n)):
+            candidates = []
+            for i, (seq, seq_score) in enumerate(top_k_sents):
+                self.feed_dict[self.inp_ph] = np.expand_dims(seq, 0)
+                fetched = self.sess.run([self.actions], feed_dict=self.feed_dict)
+                probs = fetched[0][-1, -1]
+                top_k = np.argpartition(probs, -k)[-k:]
+                top_k_probs = probs[top_k]
+                for token_id, prob in zip(top_k, top_k_probs):
+                    each_candidate = [seq + [int(token_id)], seq_score + prob]
+                    candidates.append(each_candidate)
+            top_k_sents = sorted(candidates, key=lambda item: item[1], reverse=True)[:k]
+
+        return [(' '.join([self.sp.id_to_piece(idx) for idx in seq[0]]), seq[1]) for seq in top_k_sents]
+
 
 def main(unused_argv):
     del unused_argv  # Unused
 
     tf.logging.set_verbosity(tf.logging.INFO)
 
-    n = 100
-    max_depth = 15
+    n = 10000
+    max_depth = 20
 
     start_string = '吾輩が'
 
-    start = time.time()
     lang_model = LanguageModel(FLAGS.spm_file, graph_fn, FLAGS.model_dir)
+
+    start = time.time()
     seq = lang_model.generate_example(start_string=start_string, n=max_depth, greedy=True)
     elapsed = time.time() - start
     print('Greedy:')
-    print('  text: {:s}'.format(' '.join(lang_model.id_to_token(int(token[0])) for token in seq)))
-    print('  ids: {:s}'.format(str([token[0] for token in seq])))
-    print('  policy: {:s}'.format(str([token[1] for token in seq])))
-    print('  elapsed {:.4f} sec ({:.4f} ms/token)'.format(elapsed, elapsed*1000/max_depth))
+    print('  Text: {:s}'.format(' '.join(lang_model.id_to_token(int(token[0])) for token in seq)))
+    print('  IDs: {:s}'.format(str([token[0] for token in seq])))
+    print('  Policy: {:s}'.format(str([token[1] for token in seq])))
+    print('  Elapsed {:.4f} sec ({:.4f} ms/token)'.format(elapsed, elapsed*1000/max_depth))
+
+    start = time.time()
+    top_k_seq = lang_model.beam_example(start_string=start_string, n=max_depth, k=10)
+    elapsed = time.time() - start
+    print('Beam Search:')
+    print('  TopK sents:')
+    for k, (text, score) in enumerate(top_k_seq):
+        print('    {:d}: {:s} ({:.4f})'.format(k, text, score))
+    print('  Elapsed {:.4f} sec'.format(elapsed))
 
     game = NLGGame(max_depth=max_depth,
                    calculate_p=lang_model.get_next_probs,
@@ -278,7 +308,7 @@ def main(unused_argv):
             current_state = game.result(current_state, token_id)
 
     start = time.time()
-    best_sequence = mcts_uct(game, current_state, n)
+    best_sequence = mcts_uct(game, current_state, n, report_every=100)
     elapsed = time.time() - start
     print('Final Best Sequence:')
     print('  Start: {:s}'.format(start_string))
