@@ -18,76 +18,17 @@ from gpu_utils import assign_to_gpu, average_grads_and_vars
 
 import numpy as np
 
-# GPU config
-flags.DEFINE_integer("num_hosts", default=1,
-      help="Number of TPU hosts")
-flags.DEFINE_integer("num_core_per_host", default=8,
-      help="Number of cores per host")
-
 # Experiment (data/checkpoint/directory) config
-flags.DEFINE_string("data_dir", default="",
-      help="Path to tf-records directory.")
-flags.DEFINE_string("record_info_dir", default="",
-      help="Path to local directory containing filenames.txt.")
 flags.DEFINE_string("corpus_info_path", default="",
       help="Path to corpus-info.json file.")
 flags.DEFINE_string("model_dir", default=None,
       help="Estimator model_dir.")
-flags.DEFINE_bool("do_train", default=True,
-      help="Whether to run training.")
-flags.DEFINE_bool("do_eval", default=False,
-      help="Whether to run eval on the dev set.")
 flags.DEFINE_string("eval_ckpt_path", None,
       help="Checkpoint path for do_test evaluation."
            "If set, model_dir will be ignored."
            "If unset, will use the latest ckpt in model_dir.")
-flags.DEFINE_string("warm_start_path", None,
-      help="Checkpoint path for warm start."
-           "If set, will clear Adam states."
-           "Note that the new model_dir should be different"
-           " from warm_start_path.")
-
-# Optimization config
-flags.DEFINE_float("learning_rate", default=2.5e-4,
-      help="Maximum learning rate.")
-flags.DEFINE_float("clip", default=0.25,
-      help="Gradient clipping value.")
-# for cosine decay
-flags.DEFINE_float("min_lr_ratio", default=0.004,
-      help="Minimum ratio learning rate.")
-flags.DEFINE_integer("warmup_steps", default=0,
-      help="Number of steps for linear lr warmup.")
-
-# Training config
-flags.DEFINE_integer("train_batch_size", default=60,
-      help="Size of train batch.")
-flags.DEFINE_integer("eval_batch_size", default=60,
-      help="Size of valid batch.")
-flags.DEFINE_integer("train_steps", default=100000,
-      help="Total number of training steps.")
-flags.DEFINE_integer("iterations", default=500,
-      help="Number of iterations per repeat loop.")
-flags.DEFINE_integer("save_steps", default=10000,
-      help="number of steps for model checkpointing.")
-
-# Evaluation config
-flags.DEFINE_bool("do_test", default=False,
-      help="Run on the test set.")
-flags.DEFINE_integer("max_eval_batch", default=-1,
-      help="Set -1 to turn off. Only used in test mode.")
-flags.DEFINE_bool("do_eval_only", default=False,
-      help="Run evaluation only.")
-flags.DEFINE_integer("start_eval_steps", default=10000,
-      help="Which checkpoint to start with in `do_eval_only` mode.")
-flags.DEFINE_string("eval_split", "valid",
-      help="Which data split to evaluate.")
-
 flags.DEFINE_string("spm_file", None,
       help="Location of sentencepiece model")
-flags.DEFINE_string("start_string", "今日",
-      help="")
-flags.DEFINE_integer("num_generate", default=30,
-      help="")
 
 # Model config
 flags.DEFINE_integer("tgt_len", default=70,
@@ -138,6 +79,12 @@ flags.DEFINE_float("proj_init_std", default=0.01,
       help="Initialization std for embedding projection.")
 flags.DEFINE_float("init_range", default=0.1,
       help="Initialization std when init is uniform.")
+
+# Generation hints
+flags.DEFINE_string("start_string", None,
+      help="")
+flags.DEFINE_integer("num_generate", default=30,
+      help="")
 
 FLAGS = flags.FLAGS
 
@@ -224,7 +171,7 @@ def generate(n_token, cutoffs, ps_device, spm_file, start_string, num_generate):
   sp = spm.SentencePieceProcessor()
   sp.Load(spm_file)
   start_ids = sp.encode_as_ids(start_string)
-  print('{:s}({:s})'.format(start_string, ' '.join(str(i) for i in start_ids)))
+  print(' '.join('{:s}({:d})'.format(sp.id_to_piece(i), i) for i in start_ids))
   ids = []
   ids.extend(start_ids)
 
@@ -278,7 +225,7 @@ def generate(n_token, cutoffs, ps_device, spm_file, start_string, num_generate):
         predictions = np.squeeze(predictions[-1], 0)
         predicted_id = np.argmax(predictions)
         ids.append(predicted_id)
-        print(' '.join([str(i) for i in ids]))
+        #print(' '.join([str(i) for i in ids]))
 
     print(' '.join(sp.id_to_piece(i) for i in ids))
 
