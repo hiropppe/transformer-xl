@@ -7,7 +7,6 @@ import time
 from absl import flags
 from gpu_utils import assign_to_gpu
 
-from mcts import NLGGame, State, mcts_uct
 
 
 flags.DEFINE_string("model_dir", default='./EXP-natsume/',
@@ -15,8 +14,11 @@ flags.DEFINE_string("model_dir", default='./EXP-natsume/',
 
 flags.DEFINE_string("eval_ckpt_path", None, './EXP-natsume/')
 
-flags.DEFINE_string("spm_file", '../data/natsume/natsume.model', '')
+flags.DEFINE_string("spm_file", '/data/txl/data/natsume/natsume.model', '')
 flags.DEFINE_integer("num_generate", 30, '')
+
+flags.DEFINE_bool("mcts", False, '')
+flags.DEFINE_string("mod_reward", None, '')
 
 # Model config
 flags.DEFINE_integer("tgt_len", default=1,
@@ -293,13 +295,23 @@ def main(unused_argv):
         print('    {:d}: {:s} ({:.4f})'.format(k, text, score))
     print('  Elapsed {:.4f} sec'.format(elapsed))
 
+    if not FLAGS.mcts:
+        return
+
+    mod_reward = FLAGS.mod_reward
+
+    from importlib import machinery
+    from mcts import NLGGame, State, mcts_uct
+
+    mod_reward = machinery.SourceFileLoader('mod_reward', mod_reward).load_module()
+
     game = NLGGame(max_depth=max_depth,
                    policy=lang_model.forward,
                    id_to_token=lang_model.id_to_token)
 
     start_ids = lang_model.encode_as_ids(start_string)
 
-    current_state = State(actions=[start_ids[0]])
+    current_state = State(actions=[start_ids[0]], reward_func=mod_reward.eval)
     if len(start_ids) > 1:
         for token_id in start_ids[1:]:
             current_state = game.result(current_state, token_id)

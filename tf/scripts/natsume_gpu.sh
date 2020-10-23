@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Data
-DATA_ROOT=../data/natsume/
+DATA_ROOT=/data/txl/data/natsume/
 
 # Model
 DIV_VAL=1
@@ -26,6 +26,10 @@ TEST_CLAMP_LEN=400
 
 TEST_BSZ=16
 TEST_NUM_CORE=1
+
+# Generate
+MCTS=True
+MOD_REWARD=random_reward.py
 
 
 if [[ $1 == 'train_data' ]]; then
@@ -109,7 +113,7 @@ elif [[ $1 == 'eval' ]]; then
         ${@:2}
 elif [[ $1 == 'gen' ]]; then
     echo 'Run generation ...'
-    python generate_text.py \
+    python generate.py \
         --data_dir=${DATA_ROOT}/tfrecords \
         --corpus_info_path=${DATA_ROOT}/corpus-info.json \
         --spm_file=${DATA_ROOT}/natsume.model \
@@ -136,6 +140,8 @@ elif [[ $1 == 'gen' ]]; then
         --do_gen=True \
         --eval_split=test \
         --start_string=$2 \
+	--mcts=${MCTS} \
+	--mod_reward=${MOD_REWARD} \
         ${@:2}
 elif [[ $1 == 'prob' ]]; then
     echo 'Probability of occurence ...'

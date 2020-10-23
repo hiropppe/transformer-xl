@@ -8,7 +8,6 @@ import random, queue
 import re
 from math import sqrt, log
 from random import sample
-from syntaxeval import Analyzer
 from sklearn.utils import shuffle
 from random import uniform
 
@@ -21,7 +20,7 @@ def apply_temperature(distribution, temperature=1.0):
     return probs / probs.sum()
 
 
-def eval_actions(actions, analyzer, id_to_token):
+def eval_actions(actions, reward_func, id_to_token):
     ss = []
     sents = ''.join([id_to_token(int(action)) for action in actions]).replace("▁","")
     for sent in re.split('[。?!]', sents):
@@ -30,11 +29,7 @@ def eval_actions(actions, analyzer, id_to_token):
         sent = sent + "。"
 
         try:
-            result = analyzer(sent)
-            if np.random.rand() < 0.3:
-                print('[random simulation choice] {:s} (syntax: {:4f} semantics: {:4f})'.format(sent, result['probabilities']['syntax'], result['probabilities']['semantics']))
-            ss.append(result['probabilities']['syntax'])
-            #ss.append(result['probabilities']['semantics'])
+            ss.append(reward_func(sent))
         except:
             ss.append(0.0)
 
@@ -91,7 +86,7 @@ class NLGGame(Game):
         new_state = State(
             current_depth=current_depth,
             actions=new_actions,
-            analyzer=state.analyzer)
+            reward_func=state.reward_func)
         return new_state
 
     def terminal(self, state):
@@ -99,7 +94,7 @@ class NLGGame(Game):
 
     def outcome(self, state):
         reward = eval_actions(state.actions,
-                              state.analyzer.analyze,
+                              state.reward_func,
                               self.id_to_token)
         return reward
 
@@ -124,14 +119,11 @@ class State:
             self,
             current_depth=0,
             actions=None,
-            analyzer=None
+            reward_func=None
     ):
         self.current_depth = current_depth
         self.actions = actions
-        if analyzer:
-            self.analyzer = analyzer
-        else:
-            self.analyzer = Analyzer()
+        self.reward_func = reward_func
 
 
 class Node(object):
