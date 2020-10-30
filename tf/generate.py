@@ -20,6 +20,8 @@ flags.DEFINE_integer("num_generate", 30, '')
 flags.DEFINE_bool("mcts", False, '')
 flags.DEFINE_string("mod_reward", None, '')
 
+flags.DEFINE_string("start_string", '今日は', '')
+
 # Model config
 flags.DEFINE_integer("tgt_len", default=1,
                      help="Number of steps to predict")
@@ -271,9 +273,9 @@ def main(unused_argv):
     tf.logging.set_verbosity(tf.logging.INFO)
 
     n = 10000
-    max_depth = 20
+    max_depth = 100
 
-    start_string = '吾輩が'
+    start_string = FLAGS.start_string
 
     lang_model = PolicyNet(FLAGS.spm_file, graph_fn, FLAGS.model_dir)
 
