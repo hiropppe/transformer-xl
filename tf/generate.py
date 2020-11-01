@@ -8,17 +8,20 @@ from absl import flags
 from gpu_utils import assign_to_gpu
 
 
-
-flags.DEFINE_string("model_dir", default='./EXP-natsume/',
+flags.DEFINE_string("model_dir", default='./EXP-example/',
                     help="Estimator model_dir.")
 
-flags.DEFINE_string("eval_ckpt_path", None, './EXP-natsume/')
+flags.DEFINE_string("eval_ckpt_path", None, './EXP-example/')
 
-flags.DEFINE_string("spm_file", '/data/txl/data/natsume/natsume.model', '')
+flags.DEFINE_string("spm_file", './data/example/m.model', '')
 flags.DEFINE_integer("num_generate", 30, '')
 
-flags.DEFINE_bool("mcts", False, '')
+flags.DEFINE_integer("max_depth", 100, '')
+flags.DEFINE_enum("search", default='greedy',
+                  enum_values=["greedy", "beam", "mcts"],
+                  help='')
 flags.DEFINE_string("mod_reward", None, '')
+flags.DEFINE_integer("n_steps", 10000, '')
 
 flags.DEFINE_string("start_string", '今日は', '')
 
@@ -32,17 +35,17 @@ flags.DEFINE_bool("same_length", default=True,
 flags.DEFINE_integer("clamp_len", default=400,
                      help="Clamp length")
 
-flags.DEFINE_integer("n_layer", default=16,
+flags.DEFINE_integer("n_layer", default=8,
                      help="Number of layers.")
-flags.DEFINE_integer("d_model", default=410,
+flags.DEFINE_integer("d_model", default=210,
                      help="Dimension of the model.")
-flags.DEFINE_integer("d_embed", default=410,
+flags.DEFINE_integer("d_embed", default=210,
                      help="Dimension of the embeddings.")
-flags.DEFINE_integer("n_head", default=10,
+flags.DEFINE_integer("n_head", default=5,
                      help="Number of attention heads.")
-flags.DEFINE_integer("d_head", default=41,
+flags.DEFINE_integer("d_head", default=20,
                      help="Dimension of each attention head.")
-flags.DEFINE_integer("d_inner", default=2100,
+flags.DEFINE_integer("d_inner", default=1000,
                      help="Dimension of inner hidden size in positionwise feed-forward.")
 flags.DEFINE_float("dropout", default=0.0,
                    help="Dropout rate.")
@@ -267,29 +270,20 @@ class PolicyNet(object):
         return [(' '.join([self.sp.id_to_piece(idx) for idx in seq[0]]), seq[1]) for seq in top_k_sents]
 
 
-def main(unused_argv):
-    del unused_argv  # Unused
-
-    tf.logging.set_verbosity(tf.logging.INFO)
-
-    n = 10000
-    max_depth = 100
-
-    start_string = FLAGS.start_string
-
-    lang_model = PolicyNet(FLAGS.spm_file, graph_fn, FLAGS.model_dir)
-
+def greedy(lm, start_string, max_depth):
     start = time.time()
-    seq = lang_model.generate_example(start_string=start_string, n=max_depth, greedy=True)
+    seq = lm.generate_example(start_string=start_string, n=max_depth, greedy=True)
     elapsed = time.time() - start
     print('Greedy:')
-    print('  Text: {:s}'.format(' '.join(lang_model.id_to_token(int(token[0])) for token in seq)))
+    print('  Text: {:s}'.format(''.join(lm.id_to_token(int(token[0])) for token in seq)).replace('▁', ' '))
     print('  IDs: {:s}'.format(str([token[0] for token in seq])))
     print('  Policy: {:s}'.format(str([token[1] for token in seq])))
     print('  Elapsed {:.4f} sec ({:.4f} ms/token)'.format(elapsed, elapsed*1000/max_depth))
 
+
+def beam(lm, start_string, max_depth):
     start = time.time()
-    top_k_seq = lang_model.beam_example(start_string=start_string, n=max_depth, k=10)
+    top_k_seq = lm.beam_example(start_string=start_string, n=max_depth, k=10)
     elapsed = time.time() - start
     print('Beam Search:')
     print('  TopK sents:')
@@ -297,9 +291,8 @@ def main(unused_argv):
         print('    {:d}: {:s} ({:.4f})'.format(k, text, score))
     print('  Elapsed {:.4f} sec'.format(elapsed))
 
-    if not FLAGS.mcts:
-        return
 
+def mcts(lm, start_string, n, max_depth):
     mod_reward = FLAGS.mod_reward
 
     from importlib import machinery
@@ -308,10 +301,10 @@ def main(unused_argv):
     mod_reward = machinery.SourceFileLoader('mod_reward', mod_reward).load_module()
 
     game = NLGGame(max_depth=max_depth,
-                   policy=lang_model.forward,
-                   id_to_token=lang_model.id_to_token)
+                   policy=lm.forward,
+                   id_to_token=lm.id_to_token)
 
-    start_ids = lang_model.encode_as_ids(start_string)
+    start_ids = lm.encode_as_ids(start_string)
 
     current_state = State(actions=[start_ids[0]], reward_func=mod_reward.eval)
     if len(start_ids) > 1:
@@ -324,13 +317,49 @@ def main(unused_argv):
     print('Final Best Sequence:')
     print('  Start: {:s}'.format(start_string))
     print('  Start Ids: {:s}'.format(str(start_ids)))
-    print('  Text: {:s}'.format(' '.join(lang_model.id_to_token(token_id) for token_id in best_sequence[-1].state.actions)))
+    print('  Text: {:s}'.format(' '.join(lm.id_to_token(token_id) for token_id in best_sequence[-1].state.actions)))
     print('  IDs: ' + str(best_sequence[-1].state.actions))
     print('  Number of simulations: {:d}'.format(best_sequence[0].visits))
     print('  Policy: {:s}'.format('->'.join([str(node.P)[:5] for node in best_sequence])))
     print('  Visits: {:s}'.format('->'.join([str(node.visits) for node in best_sequence])))
     print('  Action Value: {:s}'.format('->'.join([str(node.value/node.visits)[:5] for node in best_sequence])))
     print('  Elapsed(sec): total {:.4f} sec {:.4f} ms/search'.format(elapsed, elapsed*1000/n))
+
+
+def main(unused_argv):
+    del unused_argv  # Unused
+
+    tf.logging.set_verbosity(tf.logging.INFO)
+
+    start_string = FLAGS.start_string
+    max_depth = FLAGS.max_depth
+
+    lm = PolicyNet(FLAGS.spm_file, graph_fn, FLAGS.model_dir)
+
+    if FLAGS.search == 'beam':
+        beam(lm, start_string, max_depth)
+    elif FLAGS.search == 'mcts':
+        mcts(lm, start_string, FLAGS.n_steps, max_depth)
+    else:
+        greedy(lm, start_string, max_depth)
+
+
+def run(argv=None):
+  """Runs the program with an optional 'main' function and 'argv' list."""
+
+  import sys as _sys
+  from tensorflow.python.platform import flags as flgs
+
+  # Define help flags.
+  tf.app._define_help_flags()
+  # Parse known flags.
+  argv = flgs.FLAGS(_sys.argv if argv is None else argv, known_only=True)
+
+  #main = main or _sys.modules['__main__'].main
+
+  # Call the main function, passing through any arguments
+  # to the final program.
+  main(argv)
 
 
 if __name__ == "__main__":
