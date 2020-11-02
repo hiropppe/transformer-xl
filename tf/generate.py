@@ -344,22 +344,15 @@ def main(unused_argv):
         greedy(lm, start_string, max_depth)
 
 
-def run(argv=None):
-  """Runs the program with an optional 'main' function and 'argv' list."""
+def load_model(argv=None):
+    import sys as _sys
+    from tensorflow.python.platform import flags as flgs
 
-  import sys as _sys
-  from tensorflow.python.platform import flags as flgs
+    # Parse known flags.
+    argv = flgs.FLAGS(_sys.argv if argv is None else argv, known_only=True)
 
-  # Define help flags.
-  tf.app._define_help_flags()
-  # Parse known flags.
-  argv = flgs.FLAGS(_sys.argv if argv is None else argv, known_only=True)
-
-  #main = main or _sys.modules['__main__'].main
-
-  # Call the main function, passing through any arguments
-  # to the final program.
-  main(argv)
+    lm = PolicyNet(FLAGS.spm_file, graph_fn, FLAGS.model_dir)
+    return lm
 
 
 if __name__ == "__main__":
