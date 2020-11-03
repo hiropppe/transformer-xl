@@ -1,0 +1,56 @@
+FROM ubuntu:18.04
+
+WORKDIR /root
+
+RUN sed -i.bak -e "s%http://archive.ubuntu.com/ubuntu/%http://ftp.jaist.ac.jp/pub/Linux/ubuntu/%g" /etc/apt/sources.list
+
+ENV TZ Asia/Tokyo
+ENV LANG ja_JP.UTF-8
+ENV DEBIAN_FRONTEND noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential curl wget bzip2 ca-certificates libglib2.0-0 libxext6 libsm6 libxrender1 git mercurial subversion \
+      libssl-dev libreadline-dev zlib1g-dev \
+      cmake build-essential pkg-config libgoogle-perftools-dev \
+      vim unzip tzdata language-pack-ja-base && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN wget --quiet https://repo.anaconda.com/archive/Anaconda3-2019.10-Linux-x86_64.sh -O ~/anaconda.sh && \
+    /bin/bash ~/anaconda.sh -b -p /opt/conda && \
+    rm ~/anaconda.sh && \
+    ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh && \
+    echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc && \
+    echo "conda activate base" >> ~/.bashrc && \
+    find /opt/conda/ -follow -type f -name '*.a' -delete && \
+    find /opt/conda/ -follow -type f -name '*.js.map' -delete && \
+    /opt/conda/bin/conda clean -afy
+
+RUN /opt/conda/bin/pip install setuptools
+RUN /opt/conda/bin/pip install ipykernel jedi flake8 autopep8
+
+RUN git clone https://github.com/google/sentencepiece.git \
+ && cd sentencepiece \
+ && mkdir build \
+ && cd build \
+ && cmake .. \
+ && make -j $(nproc) \
+ && make install \
+ && ldconfig -v \
+ && cd ../python \
+ && /opt/conda/bin/python setup.py build \
+ && /opt/conda/bin/python setup.py install
+
+ENV PATH /root/.rbenv/shims:/root/.rbenv/bin:$PATH
+RUN curl -fsSL https://github.com/rbenv/rbenv-installer/raw/master/bin/rbenv-installer | bash || true
+RUN rbenv init || true && \
+    echo 'eval "$(rbenv init -)"' >> ~/.bashrc && \
+    rbenv install 2.6.5 && \
+    rbenv rehash && \
+    rbenv global 2.6.5 && \
+    gem install rbenv-rehash && \
+    gem install pragmatic_segmenter
+
+RUN /opt/conda/bin/conda install pytorch=0.4.1 cpuonly -c pytorch
+
+CMD [ "/bin/bash" ]
