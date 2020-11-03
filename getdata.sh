@@ -1,8 +1,8 @@
 echo "=== Acquiring datasets ==="
 echo "---"
 
-mkdir -p /data/txl/data
-cd /data/txl/data
+mkdir -p data
+cd data
 
 if [[ ! -d 'wikitext-2' ]]; then
     echo "- Downloading WikiText-2 (WT2)"

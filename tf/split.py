@@ -7,7 +7,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 
-def main(path, valid_size=0.0, test_size=0.1):
+def main(path, valid_size=0.1, test_size=0.1):
     path = Path(path)
     f = open(path)
     docs = f.readlines()

@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from data_utils import get_lm_corpus
+from data_utils import get_lm_corpus, Corpus
 from mem_transformer import MemTransformerLM
 from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel
@@ -20,7 +20,7 @@ parser = argparse.ArgumentParser(description='PyTorch Transformer Language Model
 parser.add_argument('--data', type=str, default='../data/wikitext-103',
                     help='location of the data corpus')
 parser.add_argument('--dataset', type=str, default='wt103',
-                    choices=['wt103', 'lm1b', 'enwik8', 'text8'],
+                    choices=['wt2', 'wt103', 'lm1b', 'enwik8', 'text8', 'sp'],
                     help='dataset name')
 parser.add_argument('--n_layer', type=int, default=12,
                     help='number of total layers')
