@@ -8,6 +8,7 @@ ENV DEBIAN_FRONTEND noninteractive
 
 RUN apt-get update --fix-missing && \
     apt-get install -y build-essential wget bzip2 ca-certificates libglib2.0-0 libxext6 libsm6 libxrender1 git mercurial subversion \
+        cmake build-essential pkg-config libgoogle-perftools-dev \
         vim unzip tzdata language-pack-ja-base && \
     apt-get clean
 
@@ -27,7 +28,6 @@ RUN /opt/conda/bin/pip install ipykernel jedi flake8 autopep8
 WORKDIR /root
 
 # Sentencepieces
-RUN apt-get install -y cmake build-essential pkg-config libgoogle-perftools-dev
 RUN git clone https://github.com/google/sentencepiece.git \
  && cd sentencepiece \
  && mkdir build \
@@ -41,5 +41,15 @@ RUN git clone https://github.com/google/sentencepiece.git \
  && /opt/conda/bin/python setup.py install
 
 RUN /opt/conda/bin/conda install tensorflow-gpu=1.13.1
+
+ENV PATH /root/.rbenv/shims:/root/.rbenv/bin:$PATH
+RUN curl -fsSL https://github.com/rbenv/rbenv-installer/raw/master/bin/rbenv-installer | bash || true
+RUN rbenv init || true && \
+    echo 'eval "$(rbenv init -)"' >> ~/.bashrc && \
+    rbenv install 2.6.5 && \
+    rbenv rehash && \
+    rbenv global 2.6.5 && \
+    gem install rbenv-rehash && \
+    gem install pragmatic_segmenter
 
 CMD [ "/bin/bash" ]
