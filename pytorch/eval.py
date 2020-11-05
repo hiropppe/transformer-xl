@@ -3,10 +3,12 @@ import argparse
 import time
 import math
 import os, sys
+import numpy as np
 
 import torch
+import torch.nn.functional as F
 
-from data_utils import get_lm_corpus
+from data_utils import get_lm_corpus, Corpus
 from mem_transformer import MemTransformerLM
 from utils.exp_utils import get_logger
 
@@ -14,7 +16,7 @@ parser = argparse.ArgumentParser(description='PyTorch Transformer Language Model
 parser.add_argument('--data', type=str, default='../data/wikitext-103',
                     help='location of the data corpus')
 parser.add_argument('--dataset', type=str, default='wt103',
-                    choices=['wt103', 'lm1b', 'enwik8', 'text8'],
+                    choices=['wt103', 'lm1b', 'enwik8', 'text8', 'sp'],
                     help='dataset name')
 parser.add_argument('--split', type=str, default='all',
                     choices=['all', 'valid', 'test'],
@@ -37,6 +39,8 @@ parser.add_argument('--no_log', action='store_true',
                     help='do not log the eval result')
 parser.add_argument('--same_length', action='store_true',
                     help='set same length attention with masking')
+parser.add_argument('--spm_file', type=str,
+                    help='path to spm file')
 args = parser.parse_args()
 assert args.ext_len >= 0, 'extended context length must be non-negative'
 
@@ -70,6 +74,17 @@ if args.clamp_len > 0:
 if args.same_length:
     model.same_length = True
 
+if args.spm_file:
+    import sentencepiece as sp
+    spm = sp.SentencePieceProcessor()
+    spm.Load(args.spm_file)
+
+    def decode(ids):
+        return spm.decode(ids)
+else:
+    decode = None
+
+
 ###############################################################################
 # Evaluation code
 ###############################################################################
@@ -81,8 +96,20 @@ def evaluate(eval_iter):
     with torch.no_grad():
         mems = tuple()
         for idx, (data, target, seq_len) in enumerate(eval_iter):
-            ret = model(data, target, *mems)
-            loss, mems = ret[0], ret[1:]
+            tgt_len = target.size(0)
+            ret = model.decode(data, tgt_len, *mems)
+            logit, mems = ret[0], ret[1:]
+            if decode and idx % 10 == 0:
+                test_idx = np.random.randint(target.size(1))
+                inp = decode(data[:1, test_idx].numpy().tolist())
+                print(f'inp: {inp}')
+                ref = decode(target[:, test_idx].numpy().tolist())
+                print(f'ref: {ref}')
+                gen = decode(torch.argmax(logit, dim=1).view(target.size(0), -1).numpy()[:, test_idx].tolist())
+                print(f'gen: {gen}')
+            loss = -F.log_softmax(logit, dim=-1) \
+                    .gather(1, target.view(-1).unsqueeze(1)).squeeze(1)
+            loss = loss.view(target.size(0), -1)
             loss = loss.mean()
             total_loss += seq_len * loss.item()
             total_len += seq_len

@@ -24,15 +24,16 @@ if [[ $1 == 'train' ]]; then
 elif [[ $1 == 'eval' ]]; then
     echo 'Run evaluation...'
     python eval.py \
-        --cuda \
         --data ../data/example/ \
         --dataset sp \
-        --tgt_len 64 \
-        --mem_len 640 \
-        --clamp_len 400 \
+        --work_dir $2 \
+        --tgt_len 100 \
+        --mem_len 100 \
+        --clamp_len -1 \
         --same_length \
         --split test \
-        ${@:2}
+        --spm_file ../data/example/m.model \
+        ${@:3}
 else
     echo 'unknown argment 1'
 fi
