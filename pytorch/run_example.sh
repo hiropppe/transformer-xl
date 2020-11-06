@@ -3,13 +3,14 @@
 if [[ $1 == 'train' ]]; then
     echo 'Run training...'
     python train.py \
+        --cuda \
         --data ../data/example/ \
         --datase sp \
-        --n_layer 4 \
+        --n_layer 8 \
         --d_model 210 \
         --n_head 5 \
         --d_head 20 \
-        --d_inner 1000 \
+        --d_inner 500 \
         --dropout 0.1 \
         --dropatt 0.0 \
         --optim adam \
@@ -20,10 +21,12 @@ if [[ $1 == 'train' ]]; then
         --mem_len 100 \
         --eval_tgt_len 100 \
         --batch_size 16 \
+        --spm_file ../data/example/m.model \
         ${@:2}
 elif [[ $1 == 'eval' ]]; then
     echo 'Run evaluation...'
     python eval.py \
+        --cuda \
         --data ../data/example/ \
         --dataset sp \
         --work_dir $2 \

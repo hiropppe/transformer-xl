@@ -4,11 +4,13 @@ import time
 import math
 import os, sys
 import itertools
+import copy
 
 import numpy as np
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 from data_utils import get_lm_corpus, Corpus
@@ -141,6 +143,8 @@ parser.add_argument('--static-loss-scale', type=float, default=1,
 parser.add_argument('--dynamic-loss-scale', action='store_true',
                     help='Use dynamic loss scaling.  If supplied, this argument'
                     ' supersedes --static-loss-scale.')
+parser.add_argument('--spm_file', type=str,
+                    help='path to spm file')
 args = parser.parse_args()
 args.tied = not args.not_tied
 
@@ -379,6 +383,17 @@ logging('=' * 100)
 logging('#params = {}'.format(args.n_all_param))
 logging('#non emb params = {}'.format(args.n_nonemb_param))
 
+if args.spm_file:
+    import sentencepiece as sp
+    spm = sp.SentencePieceProcessor()
+    spm.Load(args.spm_file)
+
+    def decode(ids):
+        return spm.decode(ids)
+else:
+    decode = None
+
+
 ###############################################################################
 # Training code
 ###############################################################################
@@ -403,8 +418,30 @@ def evaluate(eval_iter):
         for i, (data, target, seq_len) in enumerate(eval_iter):
             if args.max_eval_steps > 0 and i >= args.max_eval_steps:
                 break
-            ret = model(data, target, *mems)
-            loss, mems = ret[0], ret[1:]
+            eval_tgt_len = target.size(0)
+            eval_batch_size = target.size(1)
+            ret = model.decode(data, eval_tgt_len, *mems)
+            logit, mems = ret[0], ret[1:]
+            #ret = model(data, target, *mems)
+            #loss, mems = ret[0], ret[1:]
+            if decode and (i+1) % (eval_iter.n_batch // 3) == 0:
+                sample_idx = np.random.randint(eval_batch_size)
+                if args.cuda:
+                    inp = decode(data[:, sample_idx].cpu().numpy().tolist())
+                    ref = decode(target[:, sample_idx].cpu().numpy().tolist())
+                    gen = decode(torch.argmax(logit, dim=1).view(eval_tgt_len, -1).cpu().numpy()[:, sample_idx].tolist())
+                else:
+                    inp = decode(data[:, sample_idx].numpy().tolist())
+                    ref = decode(target[:, sample_idx].numpy().tolist())
+                    gen = decode(torch.argmax(logit, dim=1).view(eval_tgt_len, -1).numpy()[:, sample_idx].tolist())
+                logging('-' * 100)
+                logging(f'Generate a sample of the validation data {(i+1)*3//eval_iter.n_batch}')
+                logging(f'[inp] {inp}')
+                logging(f'[ref] {ref}')
+                logging(f'[gen] {gen}')
+            loss = -F.log_softmax(logit, dim=-1) \
+                    .gather(1, target.view(-1).unsqueeze(1)).squeeze(1)
+            loss = loss.view(eval_tgt_len, -1)
             loss = loss.mean()
             total_loss += seq_len * loss.float().item()
             total_len += seq_len
@@ -442,6 +479,11 @@ def train():
                     loss.backward()
                 train_loss += loss.float().item()
         else:
+            if decode:
+                pre_mems = copy.deepcopy(mems)
+            else:
+                pre_mems = None
+
             ret = para_model(data, target, *mems)
             loss, mems = ret[0], ret[1:]
             loss = loss.float().mean().type_as(loss)
@@ -493,6 +535,26 @@ def train():
             log_start_time = time.time()
 
         if train_step % args.eval_interval == 0:
+            if decode:
+                tgt_len = target.size(0)
+                batch_size = target.size(1)
+                ret = para_model.decode(data, tgt_len, *pre_mems)
+                logit = ret[0]
+                sample_idx = np.random.randint(batch_size)
+                if args.cuda:
+                    inp = decode(data[:, sample_idx].cpu().numpy().tolist())
+                    ref = decode(target[:, sample_idx].cpu().numpy().tolist())
+                    gen = decode(torch.argmax(logit, dim=1).view(tgt_len, -1).cpu().numpy()[:, sample_idx].tolist())
+                else:
+                    inp = decode(data[:, sample_idx].numpy().tolist())
+                    ref = decode(target[:, sample_idx].numpy().tolist())
+                    gen = decode(torch.argmax(logit, dim=1).view(tgt_len, -1).numpy()[:, sample_idx].tolist())
+                logging('-' * 100)
+                logging('Generate a sample of the training data')
+                logging(f'[inp] {inp}')
+                logging(f'[ref] {ref}')
+                logging(f'[gen] {gen}')
+
             val_loss = evaluate(va_iter)
             logging('-' * 100)
             log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
