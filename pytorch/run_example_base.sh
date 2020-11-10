@@ -6,11 +6,11 @@ if [[ $1 == 'train' ]]; then
         --cuda \
         --data ../data/example/ \
         --datase sp \
-        --n_layer 8 \
-        --d_model 210 \
-        --n_head 5 \
-        --d_head 21 \
-        --d_inner 1000 \
+        --n_layer 16 \
+        --d_model 410 \
+        --n_head 10 \
+        --d_head 41 \
+        --d_inner 2100 \
         --dropout 0.1 \
         --dropatt 0.0 \
         --optim adam \
@@ -21,6 +21,7 @@ if [[ $1 == 'train' ]]; then
         --mem_len 150 \
         --eval_tgt_len 150 \
         --batch_size 60 \
+        --multi_gpu \
         --spm_file ../data/example/m.model \
         ${@:2}
 elif [[ $1 == 'eval' ]]; then

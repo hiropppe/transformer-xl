@@ -643,7 +643,6 @@ class MemTransformerLM(nn.Module):
         qlen, bsz = dec_inp.size()
 
         word_emb = self.word_emb(dec_inp)
-
         mlen = mems[0].size(0) if mems is not None else 0
         klen = mlen + qlen
         if self.same_length:
@@ -751,13 +750,15 @@ class MemTransformerLM(nn.Module):
                 self.out_layer.bias, target, pred_hid, self.sampler)
             loss = -F.log_softmax(logit, -1)[:, :, 0]
         else:
-            loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.view(-1))
+            logit, loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.view(-1))
             loss = loss.view(tgt_len, -1)
 
+        logit = logit.view(tgt_len, -1, logit.size(-1))
+
         if new_mems is None:
-            return [loss]
+            return [logit, loss]
         else:
-            return [loss] + new_mems
+            return [logit, loss] + new_mems
 
     def decode(self, data, tgt_len, *mems):
         # nn.DataParallel does not allow size(0) tensors to be broadcasted.

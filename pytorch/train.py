@@ -104,7 +104,7 @@ parser.add_argument('--multi_gpu', action='store_true',
                     help='use multiple GPU')
 parser.add_argument('--log-interval', type=int, default=200,
                     help='report interval')
-parser.add_argument('--eval-interval', type=int, default=4000,
+parser.add_argument('--eval-interval', type=int, default=1000,
                     help='evaluation interval')
 parser.add_argument('--work_dir', default='LM-TFM', type=str,
                     help='experiment directory.')
@@ -419,28 +419,15 @@ def evaluate(eval_iter):
             if args.max_eval_steps > 0 and i >= args.max_eval_steps:
                 break
             eval_tgt_len = target.size(0)
-            eval_batch_size = target.size(1)
-            ret = model.decode(data, eval_tgt_len, *mems)
-            logit, mems = ret[0], ret[1:]
-            #ret = model(data, target, *mems)
-            #loss, mems = ret[0], ret[1:]
             if decode and (i+1) % (eval_iter.n_batch // 3) == 0:
-                sample_idx = np.random.randint(eval_batch_size)
-                if args.cuda:
-                    inp = decode(data[:, sample_idx].cpu().numpy().tolist())
-                    ref = decode(target[:, sample_idx].cpu().numpy().tolist())
-                    gen = decode(torch.argmax(logit, dim=1).view(eval_tgt_len, -1).cpu().numpy()[:, sample_idx].tolist())
-                else:
-                    inp = decode(data[:, sample_idx].numpy().tolist())
-                    ref = decode(target[:, sample_idx].numpy().tolist())
-                    gen = decode(torch.argmax(logit, dim=1).view(eval_tgt_len, -1).numpy()[:, sample_idx].tolist())
                 logging('-' * 100)
-                logging(f'Generate a sample of the validation data {(i+1)*3//eval_iter.n_batch}')
-                logging(f'[inp] {inp}')
-                logging(f'[ref] {ref}')
-                logging(f'[gen] {gen}')
-            loss = -F.log_softmax(logit, dim=-1) \
-                    .gather(1, target.view(-1).unsqueeze(1)).squeeze(1)
+                logging('Generate a sample of the validation data')
+                ret = check_generate(model, data, target, mems)
+            else:
+                ret = model(data, target, *mems)
+            loss, mems = ret[1], ret[2:]
+            #loss = -F.log_softmax(logit, dim=-1) \
+            #        .gather(1, target.view(-1).unsqueeze(1)).squeeze(1)
             loss = loss.view(eval_tgt_len, -1)
             loss = loss.mean()
             total_loss += seq_len * loss.float().item()
@@ -471,7 +458,7 @@ def train():
                 data_i = data_chunks[i].contiguous()
                 target_i = target_chunks[i].contiguous()
                 ret = para_model(data_i, target_i, *mems[i])
-                loss, mems[i] = ret[0], ret[1:]
+                loss, mems[i] = ret[1], ret[2:]
                 loss = loss.float().mean().type_as(loss) / args.batch_chunk
                 if args.fp16:
                     optimizer.backward(loss)
@@ -479,13 +466,8 @@ def train():
                     loss.backward()
                 train_loss += loss.float().item()
         else:
-            if decode:
-                pre_mems = copy.deepcopy(mems)
-            else:
-                pre_mems = None
-
             ret = para_model(data, target, *mems)
-            loss, mems = ret[0], ret[1:]
+            loss, mems = ret[1], ret[2:]
             loss = loss.float().mean().type_as(loss)
             if args.fp16:
                 optimizer.backward(loss)
@@ -536,24 +518,9 @@ def train():
 
         if train_step % args.eval_interval == 0:
             if decode:
-                tgt_len = target.size(0)
-                batch_size = target.size(1)
-                ret = para_model.decode(data, tgt_len, *pre_mems)
-                logit = ret[0]
-                sample_idx = np.random.randint(batch_size)
-                if args.cuda:
-                    inp = decode(data[:, sample_idx].cpu().numpy().tolist())
-                    ref = decode(target[:, sample_idx].cpu().numpy().tolist())
-                    gen = decode(torch.argmax(logit, dim=1).view(tgt_len, -1).cpu().numpy()[:, sample_idx].tolist())
-                else:
-                    inp = decode(data[:, sample_idx].numpy().tolist())
-                    ref = decode(target[:, sample_idx].numpy().tolist())
-                    gen = decode(torch.argmax(logit, dim=1).view(tgt_len, -1).numpy()[:, sample_idx].tolist())
                 logging('-' * 100)
                 logging('Generate a sample of the training data')
-                logging(f'[inp] {inp}')
-                logging(f'[ref] {ref}')
-                logging(f'[gen] {gen}')
+                check_generate(para_model, data, target, mems)
 
             val_loss = evaluate(va_iter)
             logging('-' * 100)
@@ -586,6 +553,48 @@ def train():
 
         if train_step == args.max_step:
             break
+
+
+def forward_logit(model, data, tgt_len, *mems):
+    # nn.DataParallel does not allow size(0) tensors to be broadcasted.
+    # So, have to initialize size(0) mems inside the model forward.
+    # Moreover, have to return new_mems to allow nn.DataParallel to piece
+    # them together.
+    if not mems: mems = model.init_mems()
+
+    hidden, new_mems = model._forward(data, mems=mems)
+
+    pred_hid = hidden[-tgt_len:]
+    hidden = pred_hid.view(-1, pred_hid.size(-1))
+    weight = model.crit.out_layers[0].weight
+    bias = model.out_layers[0].bias
+    logit = F.linear(hidden, weight, bias=bias)
+
+    if new_mems is None:
+        return [logit]
+    else:
+        return [logit] + new_mems
+
+
+def check_generate(model, data, target, mems):
+    ret = model(data, target, *mems)
+    logit = ret[0]
+    tgt_len = target.size(0)
+    batch_size = target.size(1)
+    sample_idx = np.random.randint(batch_size)
+    if args.cuda:
+        inp = decode(data[:, sample_idx].cpu().numpy().tolist())
+        ref = decode(target[:, sample_idx].cpu().numpy().tolist())
+        gen = decode(torch.argmax(logit, dim=-1).view(tgt_len, -1).cpu().numpy()[:, sample_idx].tolist())
+    else:
+        inp = decode(data[:, sample_idx].numpy().tolist())
+        ref = decode(target[:, sample_idx].numpy().tolist())
+        gen = decode(torch.argmax(logit, dim=-1).view(tgt_len, -1).numpy()[:, sample_idx].tolist())
+    logging(f'[inp] {inp}')
+    logging(f'[ref] {ref}')
+    logging(f'[gen] {gen}')
+    return ret
+
 
 # Loop over epochs.
 train_step = 0
