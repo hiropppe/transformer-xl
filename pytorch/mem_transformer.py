@@ -509,6 +509,7 @@ class MemTransformerLM(nn.Module):
         self.n_head = n_head
         self.d_head = d_head
 
+        self.cutoffs = cutoffs
         self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs, 
                                           div_val=div_val)
 
@@ -753,12 +754,18 @@ class MemTransformerLM(nn.Module):
             logit, loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.view(-1))
             loss = loss.view(tgt_len, -1)
 
-        logit = logit.view(tgt_len, -1, logit.size(-1))
-
-        if new_mems is None:
-            return [logit, loss]
+        if self.cutoffs:
+            if new_mems is None:
+                return [loss]
+            else:
+                return [loss] + new_mems
         else:
-            return [logit, loss] + new_mems
+            logit = logit.view(tgt_len, -1, logit.size(-1))
+
+            if new_mems is None:
+                return [logit, loss]
+            else:
+                return [logit, loss] + new_mems
 
     def decode(self, data, tgt_len, *mems):
         # nn.DataParallel does not allow size(0) tensors to be broadcasted.

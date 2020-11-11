@@ -104,7 +104,7 @@ parser.add_argument('--multi_gpu', action='store_true',
                     help='use multiple GPU')
 parser.add_argument('--log-interval', type=int, default=200,
                     help='report interval')
-parser.add_argument('--eval-interval', type=int, default=1000,
+parser.add_argument('--eval-interval', type=int, default=2000,
                     help='evaluation interval')
 parser.add_argument('--work_dir', default='LM-TFM', type=str,
                     help='experiment directory.')
@@ -419,13 +419,17 @@ def evaluate(eval_iter):
             if args.max_eval_steps > 0 and i >= args.max_eval_steps:
                 break
             eval_tgt_len = target.size(0)
-            if decode and (i+1) % (eval_iter.n_batch // 3) == 0:
+            if not args.adaptive and decode and (i+1) % (eval_iter.n_batch // 3) == 0:
                 logging('-' * 100)
                 logging('Generate a sample of the validation data')
                 ret = check_generate(model, data, target, mems)
             else:
                 ret = model(data, target, *mems)
-            loss, mems = ret[1], ret[2:]
+
+            if args.adaptive:
+                loss, mems = ret[0], ret[1:]
+            else:
+                loss, mems = ret[1], ret[2:]
             #loss = -F.log_softmax(logit, dim=-1) \
             #        .gather(1, target.view(-1).unsqueeze(1)).squeeze(1)
             loss = loss.view(eval_tgt_len, -1)
@@ -458,7 +462,10 @@ def train():
                 data_i = data_chunks[i].contiguous()
                 target_i = target_chunks[i].contiguous()
                 ret = para_model(data_i, target_i, *mems[i])
-                loss, mems[i] = ret[1], ret[2:]
+                if args.adaptive:
+                    loss, mems[i] = ret[0], ret[1:]
+                else:
+                    loss, mems[i] = ret[1], ret[2:]
                 loss = loss.float().mean().type_as(loss) / args.batch_chunk
                 if args.fp16:
                     optimizer.backward(loss)
@@ -467,7 +474,10 @@ def train():
                 train_loss += loss.float().item()
         else:
             ret = para_model(data, target, *mems)
-            loss, mems = ret[1], ret[2:]
+            if args.adaptive:
+                loss, mems = ret[0], ret[1:]
+            else:
+                loss, mems = ret[1], ret[2:]
             loss = loss.float().mean().type_as(loss)
             if args.fp16:
                 optimizer.backward(loss)
@@ -517,7 +527,7 @@ def train():
             log_start_time = time.time()
 
         if train_step % args.eval_interval == 0:
-            if decode:
+            if not args.adaptive and decode:
                 logging('-' * 100)
                 logging('Generate a sample of the training data')
                 check_generate(para_model, data, target, mems)
@@ -590,7 +600,7 @@ def check_generate(model, data, target, mems):
         inp = decode(data[:, sample_idx].numpy().tolist())
         ref = decode(target[:, sample_idx].numpy().tolist())
         gen = decode(torch.argmax(logit, dim=-1).view(tgt_len, -1).numpy()[:, sample_idx].tolist())
-    logging(f'[inp] {inp}')
+    logging(f'Start: {inp[0]}')
     logging(f'[ref] {ref}')
     logging(f'[gen] {gen}')
     return ret
