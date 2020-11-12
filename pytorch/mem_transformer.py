@@ -767,25 +767,20 @@ class MemTransformerLM(nn.Module):
             else:
                 return [logit, loss] + new_mems
 
-    def decode(self, data, tgt_len, *mems):
-        # nn.DataParallel does not allow size(0) tensors to be broadcasted.
-        # So, have to initialize size(0) mems inside the model forward.
-        # Moreover, have to return new_mems to allow nn.DataParallel to piece
-        # them together.
+    def logit(self, data, tgt_len, *mems):
         if not mems: mems = self.init_mems()
 
         hidden, new_mems = self._forward(data, mems=mems)
-
         pred_hid = hidden[-tgt_len:]
         hidden = pred_hid.view(-1, pred_hid.size(-1))
         weight = self.crit.out_layers[0].weight
         bias = self.crit.out_layers[0].bias
         logit = F.linear(hidden, weight, bias=bias)
 
-        if new_mems is None:
-            return [logit]
-        else:
-            return [logit] + new_mems
+        logit = logit.view(tgt_len, -1, logit.size(-1))
+
+        return [logit] + new_mems
+
 
 
 if __name__ == '__main__':
