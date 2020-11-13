@@ -1,31 +1,23 @@
 # coding: utf-8
 import argparse
 import time
-import math
 import os
-import sys
-import itertools
-import copy
 
 import numpy as np
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-
-from data_utils import get_lm_corpus, Corpus
-from mem_transformer import MemTransformerLM
-from utils.exp_utils import create_exp_dir
-from utils.data_parallel import BalancedDataParallel
 
 
-def load_model(model_dir, spm_file, cuda=False):
+def load_model(model_dir, spm_file, latest_model=False, cuda=False):
     global model, para_model, spm, device
     device = torch.device('cuda' if cuda else 'cpu')
 
-    with open(os.path.join(model_dir, 'model.pt'), 'rb') as f:
+    model_name = 'latest_model.pt' if latest_model else 'model.pt'
+
+    with open(os.path.join(model_dir, model_name), 'rb') as f:
         model = torch.load(f)
+
+    model.eval()
     para_model = model.to(device)
 
     import sentencepiece as sp
@@ -46,7 +38,7 @@ def greedy(start_string, L=100):
     while dec_inp.size(0) < init_len + L:
         tgt_len = dec_inp.size(0)
         mems = tuple()
-        ret = para_model.logit(dec_inp, tgt_len, *mems)
+        ret = model.logit(dec_inp, tgt_len, *mems)
         logit, mems = ret[0], ret[1:]
         if device.type == 'cuda':
             dec_out = torch.argmax(logit, dim=-1).view(tgt_len, -1).cpu().numpy()[-1:, 0].tolist()
@@ -75,6 +67,8 @@ def main():
                         help='model directory.')
     parser.add_argument('--spm_file', type=str,
                         help='path to spm file')
+    parser.add_argument('--latest_model', action='store_true',
+                        help='Load the latest model instead of the best model.')
     parser.add_argument('--seed', type=int, default=1111,
                         help='random seed')
     args = parser.parse_args()
@@ -96,7 +90,7 @@ def main():
     if not torch.cuda.is_available():
         args.cuda = False
 
-    load_model(args.model_dir, args.spm_file, args.cuda)
+    load_model(args.model_dir, args.spm_file, args.latest_model, args.cuda)
 
     greedy(args.start_string, args.seq_len)
 

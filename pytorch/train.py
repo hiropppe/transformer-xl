@@ -104,7 +104,7 @@ parser.add_argument('--multi_gpu', action='store_true',
                     help='use multiple GPU')
 parser.add_argument('--log-interval', type=int, default=200,
                     help='report interval')
-parser.add_argument('--eval-interval', type=int, default=2000,
+parser.add_argument('--eval-interval', type=int, default=1000,
                     help='evaluation interval')
 parser.add_argument('--work_dir', default='LM-TFM', type=str,
                     help='experiment directory.')
@@ -145,6 +145,8 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
                     ' supersedes --static-loss-scale.')
 parser.add_argument('--spm_file', type=str,
                     help='path to spm file')
+parser.add_argument('--save_latest', action='store_true',
+                    help='')
 args = parser.parse_args()
 args.tied = not args.not_tied
 
@@ -530,7 +532,12 @@ def train():
             if not args.adaptive and decode:
                 logging('-' * 100)
                 logging('Generate a sample of the training data')
-                check_generate(para_model, data, target, mems)
+                model.eval()
+                with torch.no_grad():
+                    mems_tmp = tuple()
+                    check_generate(model, data, target, mems_tmp)
+                model.reset_length(args.tgt_len, args.ext_len, args.mem_len)
+                model.train()
 
             val_loss = evaluate(va_iter)
             logging('-' * 100)
@@ -552,6 +559,15 @@ def train():
                     with open(os.path.join(args.work_dir, 'optimizer.pt'), 'wb') as f:
                         torch.save(optimizer.state_dict(), f)
                 best_val_loss = val_loss
+
+            if args.save_latest:
+                if not args.debug:
+                    with open(os.path.join(args.work_dir, 'latest_model.pt'), 'wb') as f:
+                        torch.save(model, f)
+                    with open(os.path.join(args.work_dir, 'latest_optimizer.pt'), 'wb') as f:
+                        torch.save(optimizer.state_dict(), f)
+                best_val_loss = val_loss
+
 
             # dev-performance based learning rate annealing
             if args.scheduler == 'dev_perf':
