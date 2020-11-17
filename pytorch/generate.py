@@ -2,14 +2,17 @@
 import argparse
 import time
 import os
+import sys
 
 import numpy as np
 
 import torch
 
+from data_utils import Corpus
 
-def load_model(model_dir, spm_file, latest_model=False, cuda=False):
-    global model, para_model, spm, device
+
+def load_model(model_dir, corpus_dir=None, spm_file=None, latest_model=False, cuda=False):
+    global model, para_model, vocab, spm, device
     device = torch.device('cuda' if cuda else 'cpu')
 
     model_name = 'latest_model.pt' if latest_model else 'model.pt'
@@ -20,9 +23,15 @@ def load_model(model_dir, spm_file, latest_model=False, cuda=False):
     model.eval()
     para_model = model.to(device)
 
-    import sentencepiece as sp
-    spm = sp.SentencePieceProcessor()
-    spm.Load(spm_file)
+    if corpus_dir:
+        corpus = torch.load(os.path.join(corpus_dir, 'cache.pt'))
+        vocab = corpus.vocab
+        spm = None
+    else:
+        import sentencepiece as sp
+        spm = sp.SentencePieceProcessor()
+        spm.Load(spm_file)
+        vocab = None
 
     n_all_param = sum([p.nelement() for p in model.parameters()])
     n_nonemb_param = sum([p.nelement() for p in model.layers.parameters()])
@@ -30,11 +39,43 @@ def load_model(model_dir, spm_file, latest_model=False, cuda=False):
     print('#non emb params = {}'.format(n_nonemb_param))
 
 
-def greedy(start_string, L=100):
+def encode(context):
+    if os.path.exists(context):
+        if vocab:
+            tensor = vocab.encode_file(context, ordered=True).view(-1, 1).to(device)
+        else:
+            encoded = []
+            with open(context) as fin:
+                for line in fin:
+                    ids = spm.encode_as_ids(context)
+                    encoded.append(torch.LongTensor(ids))
+            encoded = torch.cat(encoded).view(-1, 1).to(device)
+    else:
+        if vocab:
+            symbols = vocab.tokenize(context, add_eos=False)
+            tensor = vocab.convert_to_tensor(symbols).view(-1, 1).to(device)
+        else:
+            ids = spm.encode_as_ids(context)
+            tensor = torch.LongTensor(ids).view(-1, 1).to(device)
+    return tensor
+
+
+def decode(ids):
+    if vocab:
+        text = vocab.convert_to_sent(ids) 
+    else:
+        text = spm.decode(ids)
+    return text
+
+
+def greedy(context, L=100):
     start = time.time()
-    seq = spm.encode_as_ids(start_string)
-    init_len = len(seq)
-    dec_inp = torch.LongTensor(seq).view(-1, 1).to(device)
+    dec_inp = encode(context)
+    if device.type == 'cuda':
+        seq = dec_inp.flatten().cpu().numpy().tolist()
+    else:
+        seq = dec_inp.flatten().numpy().tolist()
+    init_len = dec_inp.size(0)
     while dec_inp.size(0) < init_len + L:
         tgt_len = dec_inp.size(0)
         mems = tuple()
@@ -47,17 +88,16 @@ def greedy(start_string, L=100):
         seq.extend(dec_out)
         dec_inp = torch.LongTensor(seq).view(-1, 1).to(device)
     elapsed = time.time() - start
-
-    text = spm.decode(seq)
+    text = decode(seq[init_len:])
     print('Greedy:')
     print(f'  Text: {text}')
-    print(f'  IDs: {seq}')
+    #print(f'  IDs: {seq}')
     print('  Elapsed {:.4f} sec ({:.4f} ms/token)'.format(elapsed, elapsed*1000/L))
 
 
 def main():
     parser = argparse.ArgumentParser(description='PyTorch Transformer Language Model')
-    parser.add_argument('--start-string', type=str,
+    parser.add_argument('--context', type=str,
                         help='')
     parser.add_argument('--seq_len', '-L', type=int, default=100,
                         help='number of tokens to predict')
@@ -65,6 +105,8 @@ def main():
                         help='use CUDA')
     parser.add_argument('--model_dir', default='LM-TFM', type=str,
                         help='model directory.')
+    parser.add_argument('--corpus_dir', default='../data/wikitext-102/', type=str,
+                        help='')
     parser.add_argument('--spm_file', type=str,
                         help='path to spm file')
     parser.add_argument('--latest_model', action='store_true',
@@ -90,9 +132,9 @@ def main():
     if not torch.cuda.is_available():
         args.cuda = False
 
-    load_model(args.model_dir, args.spm_file, args.latest_model, args.cuda)
+    load_model(args.model_dir, args.corpus_dir, args.spm_file, args.latest_model, args.cuda)
 
-    greedy(args.start_string, args.seq_len)
+    greedy(args.context, args.seq_len)
 
 
 if __name__ == "__main__":
