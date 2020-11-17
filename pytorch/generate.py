@@ -26,6 +26,9 @@ def load_model(model_dir, corpus_dir=None, spm_file=None, latest_model=False, cu
     if corpus_dir:
         corpus = torch.load(os.path.join(corpus_dir, 'cache.pt'))
         vocab = corpus.vocab
+        if not hasattr(vocab, 'unk_idx'):
+            if '<unk>' in vocab.sym2idx:
+                vocab.unk_idx = vocab.sym2idx['<unk>']
         spm = None
     else:
         import sentencepiece as sp
@@ -42,7 +45,7 @@ def load_model(model_dir, corpus_dir=None, spm_file=None, latest_model=False, cu
 def encode(context):
     if os.path.exists(context):
         if vocab:
-            tensor = vocab.encode_file(context, ordered=True).view(-1, 1).to(device)
+            tensor = vocab.encode_file(context, add_eos=False, ordered=True).view(-1, 1).to(device)
         else:
             encoded = []
             with open(context) as fin:
@@ -89,6 +92,7 @@ def greedy(context, L=100):
         dec_inp = torch.LongTensor(seq).view(-1, 1).to(device)
     elapsed = time.time() - start
     text = decode(seq[init_len:])
+    text = text.replace('<eos>', '\n')
     print('Greedy:')
     print(f'  Text: {text}')
     #print(f'  IDs: {seq}')
