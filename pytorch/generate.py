@@ -49,7 +49,7 @@ def encode(context):
                 for line in fin:
                     ids = spm.encode_as_ids(context)
                     encoded.append(torch.LongTensor(ids))
-            encoded = torch.cat(encoded).view(-1, 1).to(device)
+            tensor = torch.cat(encoded).view(-1, 1).to(device)
     else:
         if vocab:
             symbols = vocab.tokenize(context, add_eos=False)
@@ -105,7 +105,7 @@ def main():
                         help='use CUDA')
     parser.add_argument('--model_dir', default='LM-TFM', type=str,
                         help='model directory.')
-    parser.add_argument('--corpus_dir', default='../data/wikitext-102/', type=str,
+    parser.add_argument('--corpus_dir', type=str,
                         help='')
     parser.add_argument('--spm_file', type=str,
                         help='path to spm file')
