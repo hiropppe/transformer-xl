@@ -47,7 +47,7 @@ def encode(context):
             encoded = []
             with open(context) as fin:
                 for line in fin:
-                    ids = spm.encode_as_ids(context)
+                    ids = spm.encode_as_ids(line)
                     encoded.append(torch.LongTensor(ids))
             tensor = torch.cat(encoded).view(-1, 1).to(device)
     else:
