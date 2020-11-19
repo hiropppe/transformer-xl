@@ -2,7 +2,6 @@
 import argparse
 import time
 import os
-import sys
 
 import numpy as np
 
@@ -11,8 +10,8 @@ import torch
 from data_utils import Corpus
 
 
-def load_model(model_dir, corpus_dir=None, spm_file=None, latest_model=False, cuda=False):
-    global model, para_model, vocab, spm, device
+def load_model(model_dir, corpus_dir, latest_model=False, cuda=False):
+    global model, para_model, vocab, device
     device = torch.device('cuda' if cuda else 'cpu')
 
     model_name = 'latest_model.pt' if latest_model else 'model.pt'
@@ -23,18 +22,7 @@ def load_model(model_dir, corpus_dir=None, spm_file=None, latest_model=False, cu
     model.eval()
     para_model = model.to(device)
 
-    if corpus_dir:
-        corpus = torch.load(os.path.join(corpus_dir, 'cache.pt'))
-        vocab = corpus.vocab
-        if not hasattr(vocab, 'unk_idx'):
-            if '<unk>' in vocab.sym2idx:
-                vocab.unk_idx = vocab.sym2idx['<unk>']
-        spm = None
-    else:
-        import sentencepiece as sp
-        spm = sp.SentencePieceProcessor()
-        spm.Load(spm_file)
-        vocab = None
+    vocab = torch.load(os.path.join(corpus_dir, 'cache.pt')).vocab
 
     n_all_param = sum([p.nelement() for p in model.parameters()])
     n_nonemb_param = sum([p.nelement() for p in model.layers.parameters()])
@@ -44,31 +32,15 @@ def load_model(model_dir, corpus_dir=None, spm_file=None, latest_model=False, cu
 
 def encode(context):
     if os.path.exists(context):
-        if vocab:
-            tensor = vocab.encode_file(context, add_eos=False, ordered=True).view(-1, 1).to(device)
-        else:
-            encoded = []
-            with open(context) as fin:
-                for line in fin:
-                    ids = spm.encode_as_ids(line)
-                    encoded.append(torch.LongTensor(ids))
-            tensor = torch.cat(encoded).view(-1, 1).to(device)
+        tensor = vocab.encode_file(context, add_eos=False, ordered=True).view(-1, 1).to(device)
     else:
-        if vocab:
-            symbols = vocab.tokenize(context, add_eos=False)
-            tensor = vocab.convert_to_tensor(symbols).view(-1, 1).to(device)
-        else:
-            ids = spm.encode_as_ids(context)
-            tensor = torch.LongTensor(ids).view(-1, 1).to(device)
+        symbols = vocab.tokenize(context, add_eos=False)
+        tensor = vocab.convert_to_tensor(symbols).view(-1, 1).to(device)
     return tensor
 
 
 def decode(ids):
-    if vocab:
-        text = vocab.convert_to_sent(ids) 
-    else:
-        text = spm.decode(ids)
-    return text
+    return vocab.convert_to_sent(ids)
 
 
 def greedy(context, L=100):
@@ -111,8 +83,6 @@ def main():
                         help='model directory.')
     parser.add_argument('--corpus_dir', type=str,
                         help='')
-    parser.add_argument('--spm_file', type=str,
-                        help='path to spm file')
     parser.add_argument('--latest_model', action='store_true',
                         help='Load the latest model instead of the best model.')
     parser.add_argument('--seed', type=int, default=1111,
@@ -136,7 +106,7 @@ def main():
     if not torch.cuda.is_available():
         args.cuda = False
 
-    load_model(args.model_dir, args.corpus_dir, args.spm_file, args.latest_model, args.cuda)
+    load_model(args.model_dir, args.corpus_dir, args.latest_model, args.cuda)
 
     greedy(args.context, args.seq_len)
 

@@ -18,33 +18,39 @@ class Vocab(object):
         self.delimiter = delimiter
         self.vocab_file = vocab_file
         self.spm_file = spm_file
+
         if self.spm_file:
             self.sp = spm.SentencePieceProcessor()
             self.sp.Load(self.spm_file)
-        else:
-            self.sp = None
+            self.sym2idx = OrderedDict({self.sp.IdToPiece(id): id for id in range(self.sp.GetPieceSize())})
+            self.idx2sym = list(self.sym2idx.keys())
+            self.unk_idx = self.sp.unk_id()
 
     def tokenize(self, line, add_eos=False, add_double_eos=False):
-        if self.sp:
-            return self.sp.encode_as_ids(line)
-
         line = line.strip()
         # convert to lower case
         if self.lower_case:
             line = line.lower()
 
-        # empty delimiter '' will evaluate False
-        if self.delimiter == '':
-            symbols = line
-        else:
-            symbols = line.split(self.delimiter)
-
-        if add_double_eos: # lm1b
-            return ['<S>'] + symbols + ['<S>']
-        elif add_eos:
-            return symbols + ['<eos>']
-        else:
+        if self.sp:
+            symbols = self.sp.EncodeAsPieces(line)
+            if add_eos:
+                eos = self.sp.IdToPiece(self.sp.eos_id()) 
+                symbols.append(eos)
             return symbols
+        else:
+            # empty delimiter '' will evaluate False
+            if self.delimiter == '':
+                symbols = line
+            else:
+                symbols = line.split(self.delimiter)
+
+            if add_double_eos: # lm1b
+                return ['<S>'] + symbols + ['<S>']
+            elif add_eos:
+                return symbols + [self.eos_sym]
+            else:
+                return symbols
 
     def count_file(self, path, verbose=False, add_eos=False):
         if verbose: print('counting file {} ...'.format(path))
@@ -83,7 +89,7 @@ class Vocab(object):
 
     def build_vocab(self):
         if self.sp:
-            print('vocab size {}'.format(self.sp.get_piece_size()))
+            pass
         elif self.vocab_file:
             print('building vocab from {}'.format(self.vocab_file))
             self._build_from_file(self.vocab_file)
@@ -113,15 +119,9 @@ class Vocab(object):
             for idx, line in enumerate(f):
                 if verbose and idx > 0 and idx % 500000 == 0:
                     print('    line {}'.format(idx))
-                    if self.sp:
-                        print(''.join([self.sp.id_to_piece(token_id) for token_id in encoded[-1]]))
                 symbols = self.tokenize(line, add_eos=add_eos,
-                    add_double_eos=add_double_eos)
-                if self.sp:
-                    encoded.append(torch.LongTensor(symbols))
-                else:
-                    encoded.append(self.convert_to_tensor(symbols))
-
+                                        add_double_eos=add_double_eos)
+                encoded.append(self.convert_to_tensor(symbols))
         if ordered:
             encoded = torch.cat(encoded)
 
@@ -133,10 +133,7 @@ class Vocab(object):
         for idx, symbols in enumerate(sents):
             if verbose and idx > 0 and idx % 500000 == 0:
                 print('    line {}'.format(idx))
-            if self.sp:
-                encoded.append(np.array(symbols, dtype=np.int64))
-            else:
-                encoded.append(self.convert_to_tensor(symbols))
+            encoded.append(self.convert_to_tensor(symbols))
 
         if ordered:
             encoded = torch.cat(encoded)
@@ -199,3 +196,10 @@ class Vocab(object):
         if self.spm_file:
             self.sp = spm.SentencePieceProcessor()
             self.sp.Load(self.spm_file)
+            self.sym2idx = OrderedDict({self.sp.IdToPiece(id): id for id in range(self.sp.GetPieceSize())})
+            self.idx2sym = list(self.sym2idx.keys())
+            self.unk_idx = self.sp.unk_id()
+        else:
+            if not hasattr(self, 'unk_idx'):
+                if '<unk>' in self.sym2idx:
+                    self.unk_idx = self.sym2idx['<unk>']
