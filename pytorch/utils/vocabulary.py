@@ -174,6 +174,9 @@ class Vocab(object):
         return torch.LongTensor(self.get_indices(symbols))
 
     def convert_to_sent(self, indices, exclude=None):
+        if self.sp:
+            return self.sp.decode(indices)
+
         if exclude is None:
             return ' '.join([self.get_sym(idx) for idx in indices])
         else:
